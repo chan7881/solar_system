@@ -11,14 +11,13 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 토성 고리(2026-11-21) — Cassini 전파 엄폐 광학 깊이 단면으로 비침·밝기(단일 산란, 앞·뒷면)·토성 그림자·고리 그림자.
 토성 표면 띠(2026-11-21) — `tools/make_saturn.py`로 Cassini 사진 두 장(PIA06193 남반구·PIA21046 북반구)에서 위도별 색을 뽑아 `textures/saturn_2k.jpg`. 원본은 `원본/saturn/`(git 밖).
 몸체 모양(2026-11-21) — 회전 타원체(IAU 2015 적도·극 반지름). 고리 그림자는 햇빛(직접광)에만 곱해 밤 쪽과 같은 어둡기(화소 밝기 밤 11 · B고리 그림자 13).
-금성·천왕성·해왕성·태양 표면은 아직 단색.
+대기 켜기·끄기(2026-11-21) — 금성에 다가가면 오른쪽 위에 「대기 끄기」. 끄면 Magellan 레이더 지도(`tools/make_venus.py`, 공백은 주변 값으로 메움). 태양→금성 광선이 맞는 지도 좌표가 Horizons 직하점과 일치(2026-11-21: 동경 240.11°·남위 0.79° 대 240.10°·0.79°).
+천왕성·해왕성·태양 표면은 단색(천왕성·해왕성은 실제 모습에 가깝다).
 저장소 `chan7881/solar_system`(공개).
 
 ## 남은 일
 
-1. 대기 켜기·끄기 — 짙은 대기로 표면이 가려진 천체는 토글로 대기를 끄면 표면이 보이게(사용자 결정). 금성은 Magellan 레이더 지표, 위성을 넣으면 타이탄도.
-   천왕성·해왕성은 단색이 실제 모습에 가깝다
-2. 위성 · 소천체 · 도구(크기 비교·거리 재기) 순
+1. 위성 · 소천체 · 도구(크기 비교·거리 재기) 순 — 타이탄을 넣으면 `SURFACE_UNDER`(`src/main.js`)에 지표 지도를 더한다
 - 지도 위도는 행성 중심 위도 — 몸체는 꼭짓점 방향을 그대로 두고 타원체 거리로 옮겨 만든다(`ellipsoidGeometry`). 지도를 새로 넣을 때 측지 위도면 바꿔 넣는다.
 - 고리 셰이더(`src/main.js`)는 `src/rings.js` 식을 손으로 옮긴 것이라 테스트가 셰이더 쪽은 못 잡는다 — 식을 고치면 둘 다
 
@@ -30,7 +29,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `src/ephemeris.js` | 행성 위치(Standish 궤도 요소, 1800~2050) · 반지름 · 궤도선 점 · 자세(IAU 2015, NAIF pck00011). three.js 없는 순수 함수 |
 | `src/main.js` | 장면 · 카메라 날아가기(물러나기→옮겨가기→다가가기) · 이름표 · 시간 조작 · 토성 고리 셰이더 |
 | `src/rings.js` · `tools/make_rings.py` | 고리 단면(`textures/saturn_rings.json`)·밝기·비침·그림자·밉맵의 순수 함수. 원본 엄폐 자료는 `원본/rings/`(git 밖) |
-| `textures/` · `tools/make_textures.py` · `tools/make_saturn.py` | 표면 지도 2K JPG와 출처(`textures/출처.md`). 원본(수백 MB)은 git 밖 — 주소는 출처.md, 줄이기는 스크립트 |
+| `textures/` · `tools/make_textures.py` · `tools/make_saturn.py` · `tools/make_venus.py` | 표면 지도 2K JPG와 출처(`textures/출처.md`). 원본(수백 MB)은 git 밖 — 주소는 출처.md, 줄이기는 스크립트 |
 | `tests/` | `npm test` — JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
 
 - 실행: 폴더에서 `python -m http.server 8731 --bind 127.0.0.1` → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)

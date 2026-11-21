@@ -61,6 +61,10 @@ function ellipsoidGeometry(re, rp) {
   return geo;
 }
 
+// 짙은 대기에 가려 겉에서는 표면이 안 보이는 천체 — 「대기 끄기」를 누르면 표면 지도로 바꾼다(처음 누를 때 받는다).
+// 금성: Magellan 레이더 지도(흑백, 레이더 반사 세기 — 눈으로 보는 색이 아니다)
+const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg' };
+
 const bodies = BODIES.map(b => {
   const geo = ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
@@ -198,6 +202,7 @@ function updateRings() {
 
 // ---------- 상태 ----------
 const state = {
+  atmosphere: true,
   simMs: Date.now(),
   rateIdx: REALTIME,
   live: true,
@@ -373,6 +378,28 @@ function markFocus() {
   }
 }
 
+// 대기 켜기·끄기 — 표면이 대기에 가려진 천체에 다가가 있을 때만 단추를 보인다
+const atmoBtn = document.getElementById('atmo');
+const surfaceTex = {};
+function applyAtmosphere() {
+  atmoBtn.textContent = state.atmosphere ? '대기 끄기' : '대기 켜기';
+  atmoBtn.setAttribute('aria-pressed', String(!state.atmosphere));
+  for (const [key, url] of Object.entries(SURFACE_UNDER)) {
+    const mat = byKey[key].mesh.material;
+    if (state.atmosphere) { mat.map = null; mat.color.set(byKey[key].color); mat.needsUpdate = true; continue; }
+    if (surfaceTex[key]) { mat.map = surfaceTex[key]; mat.color.set(0xffffff); mat.needsUpdate = true; continue; }
+    surfaceTex[key] = texLoader.load(url, tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      applyAtmosphere(); // 받는 사이에 다시 켰으면 그대로 대기
+    }, undefined, () => { delete surfaceTex[key]; console.warn(`표면 지도를 못 불러옴: ${url}`); });
+  }
+}
+atmoBtn.addEventListener('click', () => { state.atmosphere = !state.atmosphere; applyAtmosphere(); });
+function updateAtmoButton() {
+  atmoBtn.hidden = !(state.focus in SURFACE_UNDER) || !!state.fly;
+}
+
 const liveBtn = document.getElementById('live');
 const rateInput = document.getElementById('rate');
 const whenInput = document.getElementById('when');
@@ -447,6 +474,7 @@ function step(now = performance.now()) {
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateLabels();
   updateClock();
+  updateAtmoButton();
 }
 
 function draw() { renderer.render(scene, camera); }
@@ -472,8 +500,9 @@ camera.position.copy(OVERVIEW_DIR).multiplyScalar(overviewDist());
 controls.minDistance = byKey.sun.radius * 1.15;
 updatePositions(julianDateTT(state.simMs));
 markFocus();
+applyAtmosphere();
 
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES };
+window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere };
