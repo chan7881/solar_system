@@ -1,7 +1,7 @@
 // 화면 — 크기·거리 모두 실제 비율(km). 초점 천체를 원점에 두고 그린다(위치 계산은 JS 배정밀도, 그리기 직전에 뺀다).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
-import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene } from './ephemeris.js';
+import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes } from './ephemeris.js';
 
 const MIN = 60, HOUR = 3600, DAY = 86400;
 // 시간 빠르기(실제 1초에 흐르는 초) — 슬라이더 칸
@@ -65,10 +65,17 @@ const state = {
 };
 
 // ---------- 위치 ----------
+const basis = new THREE.Matrix4(), vx = new THREE.Vector3(), vy = new THREE.Vector3(), vz = new THREE.Vector3();
 function updatePositions(jd) {
   for (const b of bodies) {
     const p = eclipticToScene(heliocentric(b.key, jd));
     b.pos = [p[0] * AU_KM, p[1] * AU_KM, p[2] * AU_KM];
+    // 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
+    const { pole, prime, east } = bodyAxes(b.key, jd);
+    vx.fromArray(eclipticToScene(prime));
+    vy.fromArray(eclipticToScene(pole));
+    vz.fromArray(eclipticToScene(east)).negate();
+    b.mesh.quaternion.setFromRotationMatrix(basis.makeBasis(vx, vy, vz));
   }
 }
 

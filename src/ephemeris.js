@@ -108,3 +108,66 @@ export function orbitTrail(key, jd, n) {
 export function eclipticToScene([x, y, z]) {
   return [x, z, -y];
 }
+
+// ---------- 자세(자전축·자전) ----------
+// IAU WGCCRE 2015 회전 모델(Archinal et al. 2018) — NAIF pck00011.tpc 의 값을 2026-11-21에 옮김.
+//   극 RA·Dec(ICRF, °) = a0 + a1·T,  본초 자오선 W(°) = w0 + w1·d   (d: J2000 TDB부터 날, T: 세기)
+//   0.01° 미만의 주기 항(수성 칭동·목성 JA~JE·화성 작은 항)은 뺐다. 화성·해왕성의 큰 주기 항만 넣는다.
+const ROTATION = {
+  sun:     { ra: [286.13, 0],                 dec: [63.87, 0],                  w: [84.176, 14.1844] },
+  mercury: { ra: [281.0103, -0.0328],         dec: [61.4155, -0.0049],          w: [329.5988, 6.1385108] },
+  venus:   { ra: [272.76, 0],                 dec: [67.16, 0],                  w: [160.20, -1.4813688] },
+  earth:   { ra: [0, -0.641],                 dec: [90, -0.557],                w: [190.147, 360.9856235] },
+  mars:    { ra: [317.269202, -0.10927547],   dec: [54.432516, -0.05827105],    w: [176.049863, 350.891982443297] },
+  jupiter: { ra: [268.056595, -0.006499],     dec: [64.495303, 0.002413],       w: [284.95, 870.5360000] },
+  saturn:  { ra: [40.589, -0.036],            dec: [83.537, -0.004],            w: [38.90, 810.7939024] },
+  uranus:  { ra: [257.311, 0],                dec: [-15.175, 0],                w: [203.81, -501.1600928] },
+  neptune: { ra: [299.36, 0],                 dec: [43.46, 0],                  w: [249.978, 541.1397757] },
+};
+// J2000 황도 경사(IAU 1976, 84381.448″) — ICRF 적도 → J2000 황도
+const OBLIQUITY = 84381.448 / 3600 * DEG;
+
+// 극 RA·Dec와 W(°)
+export function rotationAngles(key, jd) {
+  const r = ROTATION[key];
+  if (!r) throw new Error(`자전 모델 없음: ${key}`);
+  const d = jd - 2451545.0, T = d / 36525;
+  let ra = r.ra[0] + r.ra[1] * T, dec = r.dec[0] + r.dec[1] * T, W = r.w[0] + r.w[1] * d;
+  if (key === 'mars') {
+    ra += 0.419057 * Math.sin((79.398797 + 0.5042615 * T) * DEG);
+    dec += 1.591274 * Math.cos((166.325722 + 0.5042615 * T) * DEG);
+    W += 0.584542 * Math.sin((95.391654 + 0.5042615 * T) * DEG);
+  } else if (key === 'neptune') {
+    const N = (357.85 + 52.316 * T) * DEG;
+    ra += 0.70 * Math.sin(N); dec -= 0.51 * Math.cos(N); W -= 0.48 * Math.sin(N);
+  }
+  return { ra, dec, W: ((W % 360) + 360) % 360 };
+}
+
+const equToEcl = ([x, y, z]) => {
+  const c = Math.cos(OBLIQUITY), s = Math.sin(OBLIQUITY);
+  return [x, c * y + s * z, -s * y + c * z];
+};
+
+// 천체 고정 좌표축(J2000 황도 좌표의 단위 벡터)
+//   pole: 북극(IAU 북극 — 불변면 북쪽. 천왕성·금성은 자전이 거꾸로라 W가 줄어든다)
+//   prime: 적도 위 경도 0°,  east: 동경 90°.  pole = prime × east (오른손 좌표)
+export function bodyAxes(key, jd) {
+  const { ra, dec, W } = rotationAngles(key, jd);
+  const a = ra * DEG, dl = dec * DEG, w = W * DEG;
+  const p = [Math.cos(dl) * Math.cos(a), Math.cos(dl) * Math.sin(a), Math.sin(dl)];
+  const q = [-Math.sin(a), Math.cos(a), 0]; // 천체 적도가 ICRF 적도를 남→북으로 지나는 곳
+  const pq = [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  const x = q.map((v, i) => v * Math.cos(w) + pq[i] * Math.sin(w));
+  const y = q.map((v, i) => -v * Math.sin(w) + pq[i] * Math.cos(w));
+  return { pole: equToEcl(p), prime: equToEcl(x), east: equToEcl(y) };
+}
+
+// 황도 좌표 방향 v → 그 천체의 행성 중심 동경·위도(°)
+export function bodyLonLat(key, jd, v) {
+  const { pole, prime, east } = bodyAxes(key, jd);
+  const n = Math.hypot(...v);
+  const dot = u => (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / n;
+  const lon = Math.atan2(dot(east), dot(prime)) / DEG;
+  return { lonE: (lon + 360) % 360, lat: Math.asin(Math.max(-1, Math.min(1, dot(pole)))) / DEG };
+}
