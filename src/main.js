@@ -32,7 +32,7 @@ scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
-const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter']);
+const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn']);
 const texLoader = new THREE.TextureLoader();
 function loadSurface(key, mat) {
   texLoader.load(`textures/${key}_2k.jpg`, tex => {
