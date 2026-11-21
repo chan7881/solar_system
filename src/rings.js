@@ -48,12 +48,16 @@ export function ringLight(tau, mu, mu0, sameSide) {
   return { T, F };
 }
 
-// 점 p에서 해 쪽(단위 벡터 s)으로 간 빛줄기가 원점 중심·반지름 R인 구에 막히는가 — 행성이 고리에 드리우는 그림자
-export function inPlanetShadow(p, s, R) {
-  const b = p[0] * s[0] + p[1] * s[1] + p[2] * s[2];
-  if (b > 0) return false; // 구가 해 반대쪽에 있다
-  const c = p[0] * p[0] + p[1] * p[1] + p[2] * p[2] - R * R;
-  return b * b - c > 0;
+// 점 p에서 해 쪽(단위 벡터 s)으로 간 빛줄기가 원점 중심 회전 타원체(적도 R, 극 Rp, 극축 = y)에 막히는가 — 행성이 고리에 드리우는 그림자.
+// y를 R/Rp배 늘이면 반지름 R인 구 문제가 된다(셰이더 src/main.js도 같은 식). Rp를 빼면 구.
+export function inPlanetShadow(p, s, R, Rp = R) {
+  const k = R / Rp;
+  const P = [p[0], p[1] * k, p[2]], S = [s[0], s[1] * k, s[2]];
+  const a = S[0] * S[0] + S[1] * S[1] + S[2] * S[2];
+  const b = P[0] * S[0] + P[1] * S[1] + P[2] * S[2];
+  if (b > 0) return false; // 몸체가 해 반대쪽에 있다
+  const c = P[0] * P[0] + P[1] * P[1] + P[2] * P[2] - R * R;
+  return b * b - a * c > 0;
 }
 
 // 행성 표면의 점 p에서 해 쪽(s)으로 간 빛줄기가 고리면(원점을 지나고 법선 n)을 지나는 곳의 반지름 — 고리가 행성에 드리우는 그림자

@@ -1,7 +1,7 @@
 // 화면 — 크기·거리 모두 실제 비율(km). 초점 천체를 원점에 두고 그린다(위치 계산은 JS 배정밀도, 그리기 직전에 뺀다).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
-import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes } from './ephemeris.js';
+import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius } from './ephemeris.js';
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 
 const MIN = 60, HOUR = 3600, DAY = 86400;
@@ -44,8 +44,25 @@ function loadSurface(key, mat) {
   }, undefined, () => console.warn(`표면 지도를 못 불러옴: textures/${key}_2k.jpg — 단색으로 둔다`));
 }
 
+// 회전 타원체 몸체. 구의 꼭짓점 방향(지도의 v = 행성 중심 위도)을 그대로 두고 그 방향의 타원체 거리로 옮긴다 —
+// 지도 위도가 행성 중심 위도라서(textures/출처.md) 이렇게 해야 위도가 맞는다. 법선은 타원체 면의 법선.
+function ellipsoidGeometry(re, rp) {
+  const geo = new THREE.SphereGeometry(1, 96, 48);
+  const pos = geo.attributes.position, nor = geo.attributes.normal, v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const r = ellipsoidRadius(re, rp, Math.asin(THREE.MathUtils.clamp(v.y, -1, 1)));
+    v.multiplyScalar(r);
+    pos.setXYZ(i, v.x, v.y, v.z);
+    nor.setXYZ(i, v.x / (re * re), v.y / (rp * rp), v.z / (re * re));
+  }
+  geo.normalizeNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 const bodies = BODIES.map(b => {
-  const geo = new THREE.SphereGeometry(b.radius, 96, 48);
+  const geo = ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
@@ -76,7 +93,7 @@ const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
 const ringU = {
   uTau: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
   uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
-  uRp: { value: byKey.saturn.radius }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
+  uRe: { value: byKey.saturn.re }, uRp: { value: byKey.saturn.rp }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
 };
 const RING_GLSL = /* glsl */`
   uniform sampler2D uTau; uniform float uR0, uR1;
@@ -103,7 +120,7 @@ const ringMat = new THREE.ShaderMaterial({
     #include <common>
     #include <logdepthbuf_pars_fragment>
     ${RING_GLSL}
-    uniform vec3 uCamL; uniform float uRp, uLight;
+    uniform vec3 uCamL; uniform float uRe, uRp, uLight;
     varying vec3 vP;
     void main() {
       #include <logdepthbuf_fragment>
@@ -117,9 +134,10 @@ const ringMat = new THREE.ShaderMaterial({
       if (v.y * uSunL.y > 0.0) F = 2.0 * mu0 / (mu + mu0) * (1.0 - exp(-tau * (1.0 / mu + 1.0 / mu0)));
       else if (abs(mu - mu0) < 1e-4) F = 2.0 * tau / mu * T;
       else F = 2.0 * mu0 / (mu - mu0) * (T - exp(-tau / mu0));
-      // 토성 그림자(해 쪽으로 간 빛줄기가 몸체에 막힘)
-      float b = dot(vP, uSunL);
-      if (b < 0.0 && b * b - (dot(vP, vP) - uRp * uRp) > 0.0) F = 0.0;
+      // 토성 그림자(해 쪽으로 간 빛줄기가 회전 타원체 몸체에 막힘) — y를 늘여 구 문제로 바꾼다(src/rings.js inPlanetShadow)
+      vec3 pp = vec3(vP.x, vP.y * uRe / uRp, vP.z), ss = vec3(uSunL.x, uSunL.y * uRe / uRp, uSunL.z);
+      float qa = dot(ss, ss), qb = dot(pp, ss);
+      if (qb < 0.0 && qb * qb - qa * (dot(pp, pp) - uRe * uRe) > 0.0) F = 0.0;
       // 고리별 반사율·색(src/rings.js RING_ALBEDO)
       vec4 a = r < ${RING_EDGES.cb.toFixed(1)} ? vec4(${albedoVec(0)})
              : r < ${RING_EDGES.bOut.toFixed(1)} ? vec4(${albedoVec(1)})
@@ -137,16 +155,19 @@ const ringMesh = new THREE.Mesh(new THREE.BufferGeometry(), ringMat);
 ringMesh.visible = false;
 byKey.saturn.mesh.add(ringMesh);
 
-// 토성 표면에 지는 고리 그림자: 표면 점에서 해 쪽 빛줄기가 고리면을 지나는 반지름의 τ로 햇빛을 줄인다
+// 토성 표면에 지는 고리 그림자: 표면 점에서 해 쪽 빛줄기가 고리면을 지나는 반지름의 τ로 햇빛을 줄인다.
+// 햇빛(직접광)에만 곱한다 — 주변광은 남겨 밤 쪽과 같은 방식으로 어두워지게(해는 유일한 직접광)
 byKey.saturn.mesh.material.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, { uTau: ringU.uTau, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL });
   sh.vertexShader = 'varying vec3 vP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
-  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n` + sh.fragmentShader.replace('#include <opaque_fragment>', `
+  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n` + sh.fragmentShader.replace('#include <lights_fragment_end>', `
+    #include <lights_fragment_end>
     if (vP.y * uSunL.y < 0.0 && abs(uSunL.y) > 1e-6) {
       vec3 q = vP - uSunL * (vP.y / uSunL.y);
-      outgoingLight *= exp(-ringTau(length(q.xz)) / abs(uSunL.y));
-    }
-    #include <opaque_fragment>`);
+      float ringT = exp(-ringTau(length(q.xz)) / abs(uSunL.y));
+      reflectedLight.directDiffuse *= ringT;
+      reflectedLight.directSpecular *= ringT;
+    }`);
 };
 
 fetch('textures/saturn_rings.json').then(r => r.json()).then(p => {

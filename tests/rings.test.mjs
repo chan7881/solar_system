@@ -78,6 +78,26 @@ test('행성 그림자: 해 반대쪽 고리는 그림자 속, 해 쪽·옆쪽�
   assert.equal(inPlanetShadow([0, 0, 100000], s, R), false);
 });
 
+test('행성 그림자: 토성은 납작해서 구로 보면 막히는 극 근처 빛줄기가 지나간다', () => {
+  const RE = 60268, RP = 54364, s = [1, 0, 0];
+  assert.equal(inPlanetShadow([-100000, 56000, 0], s, RE), true);       // 구라면 막힘
+  assert.equal(inPlanetShadow([-100000, 56000, 0], s, RE, RP), false);  // 극 반지름 54,364km 위로 지나간다
+  assert.equal(inPlanetShadow([-100000, 53000, 0], s, RE, RP), true);
+  assert.equal(inPlanetShadow([-100000, 0, 60000], s, RE, RP), true);   // 적도 방향은 그대로 60,268km까지
+  assert.equal(inPlanetShadow([-100000, 0, 61000], s, RE, RP), false);
+});
+
+test('몸체 모양: 행성 중심 위도의 타원체 거리 — 적도는 re, 극은 rp, 45°는 그 사이', async () => {
+  const { BODIES, ellipsoidRadius } = await import('../src/ephemeris.js');
+  const sat = BODIES.find(b => b.key === 'saturn');
+  assert.equal(sat.re, 60268); assert.equal(sat.rp, 54364);
+  assert.ok(Math.abs(ellipsoidRadius(sat.re, sat.rp, 0) - 60268) < 1e-6);
+  assert.ok(Math.abs(ellipsoidRadius(sat.re, sat.rp, Math.PI / 2) - 54364) < 1e-6);
+  const r = ellipsoidRadius(sat.re, sat.rp, Math.PI / 4), x = r * Math.SQRT1_2;
+  assert.ok(Math.abs((x / sat.re) ** 2 + (x / sat.rp) ** 2 - 1) < 1e-12, '45° 점이 타원체 위에 있다');
+  for (const b of BODIES) assert.ok(b.rp <= b.re && Math.abs(b.radius / b.re - 1) < 0.04, b.key);
+});
+
 // 2026-11-21 실제 배치 — 해는 2025-05 고리면을 지나 남쪽에 있다 → 고리 그림자는 북반구에 진다
 const JD = 2461365.5;
 const sunDir = () => { const p = heliocentric('saturn', JD), n = Math.hypot(...p); return p.map(v => -v / n); };

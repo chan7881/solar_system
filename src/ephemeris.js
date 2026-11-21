@@ -31,17 +31,25 @@ const ELEMENTS = {
             [0.00026291, 0.00005105, 0.00035372, 218.45945325, -0.32241464, -0.00508664]],
 };
 
+// radius: 평균 반지름(카메라 거리·이름표용). re·rp: 적도·극 반지름 — 몸체는 이 회전 타원체로 그린다.
+// 반지름은 IAU WGCCRE 2015(Archinal et al. 2018). 기체 행성은 1bar 면. 금성·태양은 구.
 export const BODIES = [
-  { key: 'sun',     name: '태양',   radius: 695700, color: 0xfff4e0 },
-  { key: 'mercury', name: '수성',   radius: 2439.7, color: 0x9c948c },
-  { key: 'venus',   name: '금성',   radius: 6051.8, color: 0xe6d3a8 },
-  { key: 'earth',   name: '지구',   radius: 6371.0, color: 0x3d6fb4 },
-  { key: 'mars',    name: '화성',   radius: 3389.5, color: 0xc1623b },
-  { key: 'jupiter', name: '목성',   radius: 69911,  color: 0xd2b48c },
-  { key: 'saturn',  name: '토성',   radius: 58232,  color: 0xe3cf9a },
-  { key: 'uranus',  name: '천왕성', radius: 25362,  color: 0x9fd8e0 },
-  { key: 'neptune', name: '해왕성', radius: 24622,  color: 0x4f6fd6 },
+  { key: 'sun',     name: '태양',   radius: 695700, re: 695700,    rp: 695700,    color: 0xfff4e0 },
+  { key: 'mercury', name: '수성',   radius: 2439.7, re: 2440.53,   rp: 2438.26,   color: 0x9c948c },
+  { key: 'venus',   name: '금성',   radius: 6051.8, re: 6051.8,    rp: 6051.8,    color: 0xe6d3a8 },
+  { key: 'earth',   name: '지구',   radius: 6371.0, re: 6378.1366, rp: 6356.7519, color: 0x3d6fb4 },
+  { key: 'mars',    name: '화성',   radius: 3389.5, re: 3396.19,   rp: 3376.20,   color: 0xc1623b },
+  { key: 'jupiter', name: '목성',   radius: 69911,  re: 71492,     rp: 66854,     color: 0xd2b48c },
+  { key: 'saturn',  name: '토성',   radius: 58232,  re: 60268,     rp: 54364,     color: 0xe3cf9a },
+  { key: 'uranus',  name: '천왕성', radius: 25362,  re: 25559,     rp: 24973,     color: 0x9fd8e0 },
+  { key: 'neptune', name: '해왕성', radius: 24622,  re: 24764,     rp: 24341,     color: 0x4f6fd6 },
 ];
+
+// 회전 타원체(적도 반지름 re, 극 반지름 rp) 위에서 행성 중심 위도 lat(라디안)인 점의 중심 거리
+export function ellipsoidRadius(re, rp, lat) {
+  const c = Math.cos(lat) / re, s = Math.sin(lat) / rp;
+  return 1 / Math.sqrt(c * c + s * s);
+}
 
 // UTC 밀리초 → 율리우스일(TT). TT − UTC = 37 s(윤초, 2017~) + 32.184 s. 시안에서는 상수로 둔다.
 const TT_MINUS_UTC_S = 69.184;
