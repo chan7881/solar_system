@@ -10,24 +10,63 @@
 </script>
 </head>
 <body>
-<canvas id="view"></canvas>
-<div id="labels"></div>
-
-<header id="clock">
-  <div id="date"></div>
-  <div id="rate-text"></div>
-</header>
-<button id="atmo" type="button" hidden>대기 끄기</button>
-
-<nav id="panel">
-  <div id="bodies"></div>
-  <div id="moons" hidden></div>
-  <div id="time">
-    <button id="live" type="button">실시간</button>
-    <input id="rate" type="range" min="0" step="1" value="7" aria-label="시간 빠르기">
-    <input id="when" type="datetime-local" aria-label="날짜와 시각">
+<script>/* 처음 그리기 전에 정한다 — 넓은 화면은 목록을 연 채로, 폰은 닫은 채로 */
+if (matchMedia('(min-width: 760px)').matches) document.body.classList.add('sb-open');</script>
+<aside id="sidebar" aria-label="천체 목록">
+  <div class="sb-head">
+    <span class="sb-title">천체</span>
+    <button id="sb-close" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6M20 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>닫기</span>
+    </button>
   </div>
-</nav>
+  <div id="sb-list"></div>
+</aside>
+<div id="scrim" aria-hidden="true"></div>
+
+<main id="stage">
+  <canvas id="view"></canvas>
+  <div id="labels"></div>
+
+  <header id="top">
+    <button id="sb-open" type="button" aria-label="천체 목록 열기" aria-controls="sidebar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>천체</span>
+    </button>
+    <label id="when-wrap" title="날짜·시각 고르기">
+      <span id="date"></span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="when" type="datetime-local" aria-label="날짜와 시각 고르기">
+    </label>
+  </header>
+  <button id="atmo" type="button" hidden>대기 끄기</button>
+
+  <nav id="panel" aria-label="시간 조작">
+    <div class="t-row">
+      <button id="live" type="button"><span class="dot" aria-hidden="true"></span>실시간</button>
+      <button id="pause" type="button" aria-label="멈춤" title="멈춤">
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z" fill="currentColor"/></svg>
+      </button>
+      <div id="rate-text" aria-live="polite"></div>
+    </div>
+    <div class="t-row">
+      <button id="slower" type="button" aria-label="더 과거 쪽으로" title="더 과거 쪽으로">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6l-7 6 7 6zM20 6l-7 6 7 6z" fill="currentColor"/></svg>
+      </button>
+      <div id="rate-wrap">
+        <div id="rate-track">
+          <span class="mid" aria-hidden="true"></span>
+          <input id="rate" type="range" min="0" step="1" aria-label="시간 빠르기">
+        </div>
+        <div class="rate-scale" aria-hidden="true"><span>과거로</span><span>실제 빠르기</span><span>미래로</span></div>
+      </div>
+      <button id="faster" type="button" aria-label="더 미래 쪽으로" title="더 미래 쪽으로">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6l7 6-7 6zM4 6l7 6-7 6z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </nav>
+</main>
 
 <script type="module" src="src/main.js"></script>
 </body>

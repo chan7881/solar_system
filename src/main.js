@@ -4,12 +4,8 @@ import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation } from './ephemeris.js';
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
+import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf } from './nav.js';
 
-const MIN = 60, HOUR = 3600, DAY = 86400;
-// 시간 빠르기(실제 1초에 흐르는 초) — 슬라이더 칸
-const RATES = [-365.25 * DAY, -30 * DAY, -7 * DAY, -DAY, -HOUR, -MIN, 0, 1, MIN, HOUR, DAY, 7 * DAY, 30 * DAY, 365.25 * DAY];
-const RATE_NAMES = ['1년', '1달', '1주', '1일', '1시간', '1분', '', '', '1분', '1시간', '1일', '1주', '1달', '1년'];
-const REALTIME = 7;
 const TRAIL_N = 360;
 const FOV = 45;
 
@@ -219,6 +215,8 @@ const state = {
   simMs: Date.now(),
   rateIdx: REALTIME,
   live: true,
+  paused: false,
+  atEdge: false, // 계산 범위 끝에 닿아 멈췄음(빠르기를 바꾸면 풀림)
   focus: 'sun',
   fly: null, // { from, to, t0, dur, d0, d1, bump, dir0, dir1 }
 };
@@ -270,16 +268,16 @@ function updateTrail(b, jd) {
 
 // ---------- 카메라 이동 ----------
 const ease = s => s * s * (3 - 2 * s);
-// 보이는 영역(조작부 위)의 세로·가로 반화각
-let viewH = innerHeight;
+// 무대(사이드바에 밀린 나머지) 크기와 그중 보이는 영역(조작부 위)의 높이 · 세로·가로 반화각
+let stageW = innerWidth, stageH = innerHeight, viewH = innerHeight;
 const halfV = () => (FOV / 2) * Math.PI / 180;
-const halfH = () => Math.atan(Math.tan(halfV()) * innerWidth / viewH);
+const halfH = (w = stageW) => Math.atan(Math.tan(halfV()) * w / viewH);
 const pxPerRad = () => (viewH / 2) / Math.tan(halfV());
 // 천체가 좁은 쪽 화면의 약 60%를 차지하는 거리
-const viewDist = b => b.radius / Math.sin(Math.min(halfV(), halfH()) * 0.6);
+const viewDist = (b, w) => b.radius / Math.sin(Math.min(halfV(), halfH(w)) * 0.6);
 // 전체 보기: 해왕성 궤도(약 30AU)가 기울여 본 화면에 들어오는 거리
 const OVERVIEW_TILT = 55 * Math.PI / 180;
-const overviewDist = () => Math.max(33 * AU_KM / Math.tan(halfH()), 33 * AU_KM * Math.sin(OVERVIEW_TILT) * 1.3 / Math.tan(halfV())); // 세로는 가까운 쪽이 원근으로 커져서 여유 1.3배
+const overviewDist = w => Math.max(33 * AU_KM / Math.tan(halfH(w)), 33 * AU_KM * Math.sin(OVERVIEW_TILT) * 1.3 / Math.tan(halfV())); // 세로는 가까운 쪽이 원근으로 커져서 여유 1.3배
 
 // 날아가기 3단계 — ① 두 천체가 함께 보일 만큼 물러나고 ② 옆으로 옮겨 가고 ③ 다가간다.
 // 단계마다 걸리는 시간은 거리 배율(로그)에 비례한다. 이미 충분히 멀면 ①은 0초.
@@ -292,14 +290,14 @@ function flyTo(key, opts = {}) {
   controls.update();
   controls.enableDamping = damping;
   const from = state.focus;
-  // 위성 줄이 나타나거나 사라지면 조작부 높이가 바뀐다 — 거리를 재기 전에 바꾸고 화면 크기를 다시 잡는다
   state.focus = key;
   markFocus();
-  if (Math.max(100, innerHeight - panelEl.offsetHeight) !== viewH) resize();
+  // 사이드바를 여닫는 중이면 무대 폭이 바뀌는 중이다 — 거리는 전환이 끝난 뒤의 폭으로 잰다
+  const fw = finalStageW();
   const d0 = camera.position.length();
-  const d1 = opts.dist?.() ?? viewDist(byKey[key]);
+  const d1 = opts.dist?.(fw) ?? viewDist(byKey[key], fw);
   const gap = Math.hypot(...byKey[key].pos.map((v, i) => v - byKey[from].pos[i]));
-  const D = Math.max(d0, d1, (gap / Math.tan(Math.min(halfV(), halfH()))) * 1.3);
+  const D = Math.max(d0, d1, (gap / Math.tan(Math.min(halfV(), halfH(fw)))) * 1.3);
   const w = [Math.log(D / d0), gap > 0 ? 2 : 0, Math.log(D / d1)];
   const total = w[0] + w[1] + w[2] || 1;
   const dur = Math.min(3600, 900 + 260 * total);
@@ -364,10 +362,10 @@ function project(b) {
   tmp.applyMatrix4(camera.matrixWorldInverse);
   const front = tmp.z < 0;
   tmp.applyMatrix4(camera.projectionMatrix);
-  return { x: (tmp.x + 1) / 2 * innerWidth, y: (1 - tmp.y) / 2 * innerHeight, ndcX: tmp.x, front, dist };
+  return { x: (tmp.x + 1) / 2 * stageW, y: (1 - tmp.y) / 2 * stageH, ndcX: tmp.x, front, dist };
 }
 function updateLabels() {
-  const W = innerWidth, H = innerHeight;
+  const W = stageW, H = stageH;
   const ppr = pxPerRad();
   const placed = [];
   const order = [state.focus, ...PRIORITY.filter(k => k !== state.focus)];
@@ -403,34 +401,103 @@ function updateLabels() {
 }
 
 // ---------- 화면 조작부 ----------
-const bodiesNav = document.getElementById('bodies');
-const moonsNav = document.getElementById('moons');
-const navButtons = {};
-for (const b of bodies) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.textContent = b.name;
-  btn.addEventListener('click', () => flyTo(b.key));
-  (b.parent ? moonsNav : bodiesNav).appendChild(btn);
-  navButtons[b.key] = btn;
-}
-const overviewBtn = document.createElement('button');
-overviewBtn.type = 'button';
-overviewBtn.textContent = '전체';
+// 사이드바 — 태양 · 행성(누르면 그 아래 위성이 펼쳐짐) · 기타. 넓은 화면은 무대를 밀어내고, 폰은 위에 덮는다
+const stageEl = document.getElementById('stage');
+const sbList = document.getElementById('sb-list');
+const NARROW = matchMedia('(max-width: 759px)');
+const navButtons = {}; // key → 목록 단추
+const subs = {};       // 모천체 key → { tog, box }
 const OVERVIEW_DIR = new THREE.Vector3(0, Math.sin(OVERVIEW_TILT), Math.cos(OVERVIEW_TILT));
-overviewBtn.addEventListener('click', () => flyTo('sun', { dist: overviewDist, dir: OVERVIEW_DIR }));
-bodiesNav.appendChild(overviewBtn);
+const css = c => '#' + new THREE.Color(c).getHexString();
 
-// 위성 줄: 위성이 있는 행성이나 그 위성에 가 있을 때 그 계의 위성만 보인다
-function markFocus() {
-  const f = byKey[state.focus], system = f.parent ?? f.key;
-  let any = false;
-  for (const b of bodies) {
-    navButtons[b.key].setAttribute('aria-pressed', String(b.key === state.focus));
-    b.label.classList.toggle('focus', b.key === state.focus);
-    if (b.parent) { const show = b.parent === system; navButtons[b.key].hidden = !show; any ||= show; }
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function itemButton(b, onClick) {
+  const btn = el('button', 'sb-item');
+  btn.type = 'button';
+  const sw = el('span', 'sw');
+  sw.style.background = css(b.color);
+  btn.append(sw, el('span', null, b.name));
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+function choose(key, opts) {
+  flyTo(key, opts);
+  if (NARROW.matches) setSidebar(false); // 폰에서는 고르면 닫아 화면을 보이게
+}
+function setExpanded(key, open) {
+  const s = subs[key];
+  if (!s) return;
+  s.tog.setAttribute('aria-expanded', String(open));
+  s.box.hidden = !open;
+}
+function addEntry(parentEl, { body, moons }) {
+  const row = el('div', 'sb-row');
+  const btn = itemButton(body, () => choose(body.key));
+  navButtons[body.key] = btn;
+  row.appendChild(btn);
+  parentEl.appendChild(row);
+  if (!moons.length) return;
+  const tog = el('button', 'sb-tog');
+  tog.type = 'button';
+  tog.setAttribute('aria-label', `${body.name}의 위성 ${moons.length}개 펼치기`);
+  tog.innerHTML = `<span>위성 ${moons.length}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const box = el('div', 'sb-sub');
+  box.id = `sub-${body.key}`;
+  tog.setAttribute('aria-controls', box.id);
+  for (const m of moons) {
+    const mb = itemButton(m, () => choose(m.key));
+    navButtons[m.key] = mb;
+    box.appendChild(mb);
   }
-  moonsNav.hidden = !any;
+  tog.addEventListener('click', () => setExpanded(body.key, box.hidden));
+  row.appendChild(tog);
+  parentEl.appendChild(box);
+  subs[body.key] = { tog, box };
+  setExpanded(body.key, false);
+}
+
+{
+  const g = navGroups(bodies);
+  const overview = itemButton({ name: '태양계 전체', color: 0x445066 }, () => choose('sun', { dist: overviewDist, dir: OVERVIEW_DIR }));
+  overview.querySelector('.sw').style.borderRadius = '2px';
+  sbList.appendChild(overview);
+  if (g.sun) addEntry(sbList, { body: g.sun, moons: [] });
+  sbList.appendChild(el('div', 'sb-sec', '행성'));
+  for (const e of g.planets) addEntry(sbList, e);
+  if (g.other.length) { // 행성·위성이 아닌 천체가 생기면 「기타」로 모은다
+    sbList.appendChild(el('div', 'sb-sec', '기타'));
+    for (const e of g.other) addEntry(sbList, e);
+  }
+}
+
+const sidebarEl = document.getElementById('sidebar');
+function setSidebar(open) {
+  document.body.classList.toggle('sb-open', open);
+  document.getElementById('sb-open').setAttribute('aria-expanded', String(open));
+}
+// 전환이 끝난 뒤의 무대 폭 — 넓은 화면에서 열려 있으면 사이드바 폭만큼 밀린다
+const finalStageW = () => innerWidth - (document.body.classList.contains('sb-open') && !NARROW.matches ? sidebarEl.offsetWidth : 0);
+document.getElementById('sb-close').addEventListener('click', () => setSidebar(false));
+document.getElementById('sb-open').addEventListener('click', () => setSidebar(true));
+// 폰에서 열린 목록 바깥은 덮개가 받는다 — 누르면 닫기만 하고 아래의 이름표·단추는 눌리지 않는다
+document.getElementById('scrim').addEventListener('click', () => setSidebar(false));
+// 처음 상태는 index.html 첫머리 스크립트가 정한다(그리기 전에). 폭이 760px를 넘나들면 그 폭의 기본 상태로
+NARROW.addEventListener('change', () => setSidebar(!NARROW.matches));
+setSidebar(document.body.classList.contains('sb-open'));
+
+// 보는 천체 표시 — 그 천체가 속한 계를 펼친다(다른 계는 사용자가 연 그대로 둔다)
+function markFocus() {
+  for (const b of bodies) {
+    navButtons[b.key]?.setAttribute('aria-current', String(b.key === state.focus));
+    b.label.classList.toggle('focus', b.key === state.focus);
+  }
+  const sys = systemOf(bodies, state.focus);
+  if (sys) setExpanded(sys, true);
 }
 
 // 대기 켜기·끄기 — 표면이 대기에 가려진 천체에 다가가 있을 때만 단추를 보인다
@@ -462,39 +529,52 @@ function updateAtmoButton() {
 }
 
 const liveBtn = document.getElementById('live');
+const pauseBtn = document.getElementById('pause');
 const rateInput = document.getElementById('rate');
 const whenInput = document.getElementById('when');
 const dateEl = document.getElementById('date');
 const rateEl = document.getElementById('rate-text');
 rateInput.max = String(RATES.length - 1);
+rateInput.value = String(state.rateIdx);
 const pad = n => String(n).padStart(2, '0');
 const toLocalInput = ms => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 whenInput.min = toLocalInput(VALID_FROM);
 whenInput.max = toLocalInput(VALID_TO);
 
-liveBtn.addEventListener('click', () => {
-  state.live = true; state.simMs = Date.now(); state.rateIdx = REALTIME; rateInput.value = String(REALTIME);
-});
-rateInput.addEventListener('input', () => {
-  state.rateIdx = +rateInput.value;
+// 빠르기를 바꾸면 멈춤은 풀리고, 실제 빠르기가 아니면 실시간에서 벗어난다
+function setRate(i) {
+  state.rateIdx = clampRate(i);
+  rateInput.value = String(state.rateIdx);
+  state.paused = false; state.atEdge = false;
   if (state.rateIdx !== REALTIME) state.live = false;
+}
+liveBtn.addEventListener('click', () => {
+  state.simMs = Date.now(); setRate(REALTIME); state.live = true;
 });
+pauseBtn.addEventListener('click', () => {
+  state.paused = !state.paused; state.atEdge = false;
+  if (state.paused) state.live = false; // 멈추면 그 시각에 머문다
+});
+document.getElementById('slower').addEventListener('click', () => setRate(state.rateIdx - 1));
+document.getElementById('faster').addEventListener('click', () => setRate(state.rateIdx + 1));
+rateInput.addEventListener('input', () => setRate(+rateInput.value));
+whenInput.addEventListener('click', () => { try { whenInput.showPicker(); } catch { /* 폰은 눌러서 바로 뜬다 */ } });
 whenInput.addEventListener('change', () => {
   const ms = new Date(whenInput.value).getTime();
-  if (Number.isFinite(ms)) { state.simMs = Math.min(VALID_TO, Math.max(VALID_FROM, ms)); state.live = false; }
+  if (Number.isFinite(ms)) { state.simMs = Math.min(VALID_TO, Math.max(VALID_FROM, ms)); state.live = false; state.atEdge = false; }
 });
 
-function rateText(i) {
-  if (RATES[i] === 0) return '정지';
-  if (i === REALTIME) return state.live ? '실시간' : '실제 빠르기';
-  return (RATES[i] < 0 ? '거꾸로 · ' : '') + `1초에 ${RATE_NAMES[i]}`;
-}
 const dateFmt = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 let lastWhen = '';
 function updateClock() {
   dateEl.textContent = dateFmt.format(state.simMs);
-  rateEl.textContent = rateText(state.rateIdx);
+  rateEl.textContent = state.atEdge ? '멈춤 · 1800~2050년 끝' : rateText(state);
+  rateEl.classList.toggle('live', state.live);
+  rateInput.classList.toggle('real', state.rateIdx === REALTIME);
   liveBtn.setAttribute('aria-pressed', String(state.live));
+  pauseBtn.setAttribute('aria-pressed', String(state.paused));
+  const pl = state.paused ? '다시 흐르게' : '멈춤';
+  if (pauseBtn.getAttribute('aria-label') !== pl) { pauseBtn.setAttribute('aria-label', pl); pauseBtn.title = pl; }
   if (document.activeElement !== whenInput) {
     const v = toLocalInput(state.simMs);
     if (v !== lastWhen) { whenInput.value = v; lastWhen = v; }
@@ -507,10 +587,10 @@ function step(now = performance.now()) {
   const dt = THREE.MathUtils.clamp((now - lastT) / 1000, 0, 0.25); // 그림 틀 시각이 앞설 수 있어 음수를 막는다
   lastT = now;
   if (state.live) state.simMs = Date.now();
-  else state.simMs += RATES[state.rateIdx] * dt * 1000;
-  if (state.simMs <= VALID_FROM || state.simMs >= VALID_TO) {
+  else state.simMs += advanceMs(state, dt);
+  if (state.simMs < VALID_FROM || state.simMs > VALID_TO) { // 계산 범위(1800~2050)를 넘어가려 하면 끝에서 멈춘다
     state.simMs = Math.min(VALID_TO, Math.max(VALID_FROM, state.simMs));
-    state.rateIdx = 6; rateInput.value = '6';
+    state.paused = true; state.live = false; state.atEdge = true;
   }
   const jd = julianDateTT(state.simMs);
   updatePositions(jd);
@@ -546,18 +626,28 @@ function step(now = performance.now()) {
 
 function draw() { renderer.render(scene, camera); }
 
-// 화면 중심을 조작부 위 보이는 영역의 가운데로 옮긴다(세로 화각 45°도 그 영역 기준)
+// 무대 크기에 맞추고, 화면 중심을 조작부 위 보이는 영역의 가운데로 옮긴다(세로 화각 45°도 그 영역 기준)
 const panelEl = document.getElementById('panel');
 function resize() {
-  const W = innerWidth, H = innerHeight;
-  viewH = Math.max(100, H - panelEl.offsetHeight);
-  renderer.setSize(W, H, false);
-  camera.aspect = W / viewH;
-  camera.setViewOffset(W, viewH, 0, 0, W, H);
+  stageW = Math.max(1, stageEl.clientWidth); stageH = Math.max(1, stageEl.clientHeight);
+  viewH = Math.max(100, stageH - panelEl.offsetHeight);
+  renderer.setSize(stageW, stageH, false);
+  camera.aspect = stageW / viewH;
+  camera.setViewOffset(stageW, viewH, 0, 0, stageW, stageH);
   camera.updateProjectionMatrix();
 }
-addEventListener('resize', resize);
-new ResizeObserver(resize).observe(panelEl); // 글꼴·안전 영역이 늦게 잡혀 조작부 높이가 바뀌는 경우
+// 창 크기·사이드바 밀어내기(0.25초 동안 폭이 바뀜)·조작부 높이가 늦게 잡히는 경우 모두 관찰자가 잡는다.
+// setSize는 캔버스를 비우므로 그 자리에서 다시 그린다 — 안 그리면 전환 중에 검은 화면이 깜빡인다
+function refit() {
+  resize();
+  if (!booted) return;
+  updateLabels();
+  draw();
+}
+let booted = false;
+const ro = new ResizeObserver(refit);
+ro.observe(stageEl);
+ro.observe(panelEl);
 resize();
 // 글꼴이 늦게 뜨면 이름 너비가 달라지므로 다시 잰다
 document.fonts?.ready.then(() => { for (const b of bodies) b.nameW = 0; });
@@ -569,7 +659,8 @@ updatePositions(julianDateTT(state.simMs));
 markFocus();
 applyAtmosphere();
 
+booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere };
+window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar };
