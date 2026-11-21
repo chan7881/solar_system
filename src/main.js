@@ -6,7 +6,7 @@ import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
-import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT } from './smallbodies.js';
+import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
 const TRAIL_N = 360;
 const ORBIT_OPACITY = 0.3; // 궤도(한 바퀴 고른 선)의 밝기 — 궤적(꼬리)보다 흐리게
@@ -564,6 +564,8 @@ function updateClouds(jd) {
       const attr = cloud.geometry.attributes.position;
       pointPositions(P, jd, attr.array, AU_KM);
       attr.needsUpdate = true;
+      const J = byKey.jupiter.mesh.position; // 이름표 자리(트로이 L4·L5·힐다)는 목성 황경 기준
+      cloudState.anchors = groupAnchors(P, attr.array, Math.atan2(-(J.z - sun.z), J.x - sun.x));
       cloudState.jd = jd;
     }
   }
@@ -574,6 +576,66 @@ function updateClouds(jd) {
   oort.position.copy(sun);
   const far = oort.visible ? Math.max(FAR_NEAR, camera.position.distanceTo(sun) + 1.2 * OORT.rOut * AU_KM) : FAR_NEAR;
   if (far !== camera.far) { camera.far = far; camera.updateProjectionMatrix(); }
+}
+// ---------- 무리 이름표 ----------
+// 누를 수 없는 이름. 천체 이름표가 먼저 자리를 잡고 겹치면 무리 이름을 숨긴다.
+// 소행성대·카이퍼대는 고리 가장자리, 트로이·힐다는 무리 한가운데, 오르트 구름은 위쪽.
+// 태양에서 화면으로 minPx 넘게 떨어져 보일 때만 — 멀리서 보면 무리가 태양 둘레에 뭉쳐 이름이 겹친다
+const GROUP_TAGS = [
+  { key: 'belt', name: '소행성대', g: 0, ring: 'beltR', minPx: 50 },
+  { key: 'hilda', name: '힐다', g: 1, minPx: 110 },
+  { key: 'L4', name: '트로이군', g: 2, minPx: 110 },
+  { key: 'L5', name: '트로이군', g: 2, minPx: 110 },
+  { key: 'kuiper', name: '카이퍼대', g: 3, ring: 'kuiperR', minPx: 60 },
+  { key: 'oort', name: '오르트 구름', minPx: 0 },
+];
+for (const t of GROUP_TAGS) {
+  t.el = el('div', 'glabel', t.name);
+  t.el.style.display = 'none';
+  labelLayer.prepend(t.el);
+}
+const gv = new THREE.Vector3(), gs = new THREE.Vector3();
+function toScreen(v) {
+  tmp.copy(v).applyMatrix4(camera.matrixWorldInverse);
+  const front = tmp.z < 0;
+  tmp.applyMatrix4(camera.projectionMatrix);
+  return { x: (tmp.x + 1) / 2 * stageW, y: (1 - tmp.y) / 2 * stageH, front };
+}
+function updateGroupLabels(placed = []) {
+  const L = state.layers, A = cloudState.anchors, sun = byKey.sun.mesh.position;
+  const cloudOn = cloud.visible && cloudMat.opacity > 0.5 * CLOUD_ALPHA;
+  const oortOn = oort.visible && oort.material.opacity > 0.6 * OORT_ALPHA;
+  const s = toScreen(sun);
+  for (const t of GROUP_TAGS) {
+    const hide = () => { t.el.style.display = 'none'; };
+    const isOort = t.key === 'oort';
+    if (!L.labels || !(isOort ? oortOn && L.oort : cloudOn && A && L[GROUP_LAYER[t.g]])) { hide(); continue; }
+    // 고리는 화면 아래 방향을 황도면에 눕힌 쪽(카메라 쪽 가장자리) 밑에, 거기가 화면 밖이면 맞은편 가장자리 위에
+    const tries = t.ring ? [-1, 1] : [0];
+    let box = null, p;
+    for (const side of tries) {
+      if (isOort) gv.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(0.45 * OORT.rOut * AU_KM);
+      else if (t.ring) {
+        gs.set(0, side, 0).applyQuaternion(camera.quaternion).setY(0);
+        if (gs.lengthSq() < 1e-12) gs.set(0, 0, -side);
+        gv.copy(gs.normalize()).multiplyScalar(A[t.ring] * AU_KM);
+      } else if (A[t.key]) gv.fromArray(A[t.key]);
+      else break;
+      p = toScreen(gv.add(sun));
+      const hw = t.name.length * 7, top = side < 0 ? p.y + 4 : side > 0 ? p.y - 22 : p.y - 9;
+      const b = [p.x - hw, top, p.x + hw, top + 18];
+      if (p.front && b[0] > 2 && b[2] < stageW - 2 && b[1] > 0 && b[3] < viewH) { box = b; break; } // 다 들어올 때만
+    }
+    if (!box) { hide(); continue; }
+    const near = s.front && Math.hypot(p.x - s.x, p.y - s.y) < t.minPx;
+    const clash = placed.some(q => box[0] < q[2] + 4 && q[0] < box[2] + 4 && box[1] < q[3] + 4 && q[1] < box[3] + 4);
+    if (near || clash) { hide(); continue; }
+    placed.push(box);
+    t.el.style.display = '';
+    t.el.style.color = L.groupColors ? '#' + new THREE.Color(isOort ? OORT_COLOR : GROUP_COLORS[t.g]).getHexString() : '';
+    t.el.style.transform = `translate(${p.x}px, ${box[1]}px) translateX(-50%)`;
+  }
+  return placed;
 }
 // ---------- 별자리(레이어, 처음엔 꺼짐) ----------
 // 선과 이름은 d3-celestial(J2000 적경·적위) — tools/make_constellations.py. 별은 그리지 않는다(별 배경을 두지 않기로 함).
@@ -872,7 +934,7 @@ function step(now = performance.now()) {
   camera.updateMatrixWorld();
   updateClouds(jd);
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
-  updateSky(updateLabels());
+  updateSky(updateGroupLabels(updateLabels()));
   updateClock();
 }
 
@@ -894,7 +956,7 @@ function resize() {
 function refit() {
   resize();
   if (!booted) return;
-  updateSky(updateLabels());
+  updateSky(updateGroupLabels(updateLabels()));
   draw();
 }
 let booted = false;

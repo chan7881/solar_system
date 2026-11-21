@@ -169,3 +169,5 @@ body.sb-open #sb-open { display: none; }
 .rate-scale { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); margin-top: -2px; }
 .rate-scale span:first-child::before { content: "← "; }
 .rate-scale span:last-child::after { content: " →"; }
+.glabel { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 13px; font-weight: 600; letter-spacing: .06em;
+  line-height: 18px; color: #c6cfdc; pointer-events: none; text-shadow: 0 0 3px #000, 0 0 6px #000; }

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { DWARFS, COMETS, isSmallBody, smallBodyHelio, smallBodyTrail, trailSpread, parsePoints, pointPositions, oortCloud, OORT, keplerE } from '../src/smallbodies.js';
+import { DWARFS, COMETS, isSmallBody, smallBodyHelio, smallBodyTrail, trailSpread, parsePoints, pointPositions, oortCloud, OORT, keplerE, groupAnchors } from '../src/smallbodies.js';
 import { heliocentric } from '../src/ephemeris.js';
 
 const here = new URL('.', import.meta.url);
@@ -185,3 +185,20 @@ test('오르트 구름 모형 — 3,000~100,000AU, 밀도 기울기 −3.5, 방�
   // 안쪽(20,000AU 미만, 힐스 구름)이 바깥보다 많다
   assert.ok(r.filter(x => x < 20000).length > 2 * r.filter(x => x >= 20000).length);
 });
+
+// ---------- 무리 이름표 자리 ----------
+for (const jd of [2378496.5, 2461366.5, 2470172.5]) {
+  test(`무리 이름표 자리 — L4는 목성 앞 60°, L5는 뒤 60°, 힐다는 반대편, 고리 반지름은 소행성대 2.7~3.0·카이퍼대 40~46AU (JD ${jd})`, () => {
+    const J = lon(heliocentric('jupiter', jd));
+    const A = groupAnchors(P, positions(jd), J * Math.PI / 180);
+    const lonOf = p => wrap(lon([p[0], -p[2], p[1]]) - J);
+    assert.ok(Math.abs(lonOf(A.L4) - 60) < 8, `L4 ${lonOf(A.L4)}`);
+    assert.ok(Math.abs(lonOf(A.L5) + 60) < 8, `L5 ${lonOf(A.L5)}`);
+    assert.ok(Math.abs(wrap(lonOf(A.hilda) - 180)) < 10, `힐다 ${lonOf(A.hilda)}`);
+    for (const k of ['L4', 'L5']) { const r = Math.hypot(...A[k]); assert.ok(r > 4.9 && r < 5.5, `${k} ${r}AU`); }
+    const rh = Math.hypot(...A.hilda); assert.ok(rh > 3.8 && rh < 4.8, `힐다 ${rh}AU`);
+    assert.equal(A.L4[1], 0);
+    assert.ok(A.beltR > 2.7 && A.beltR < 3.0, `소행성대 ${A.beltR}`);
+    assert.ok(A.kuiperR > 40 && A.kuiperR < 46, `카이퍼대 ${A.kuiperR}`);
+  });
+}

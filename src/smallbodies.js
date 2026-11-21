@@ -163,6 +163,33 @@ export function pointPositions(P, jd, out, scale = 1) {
   return out;
 }
 
+// 무리 이름표 자리 — pos는 pointPositions의 결과(장면 좌표, 태양 중심), jupLon은 목성의 황경(라디안).
+// 소행성대·카이퍼대는 고리라 반지름(궤도 긴반지름 중앙값, AU)만, 트로이(L4 앞·L5 뒤)·힐다(목성 반대편 꼭짓점)는
+// 그 쪽 점들의 평균 방향과 평균 거리로 황도면 위 한 점(pos와 같은 단위의 장면 좌표, y = 0)을 준다
+export function groupAnchors(P, pos, jupLon) {
+  const acc = { L4: [0, 0, 0, 0], L5: [0, 0, 0, 0], hilda: [0, 0, 0, 0] };
+  const radii = [[], [], [], []];
+  for (let k = 0; k < P.count; k++) {
+    const g = P.group[k];
+    if (g === 0 || g === 3) { radii[g].push(P.a[k]); continue; }
+    const X = pos[k * 3], Z = pos[k * 3 + 2];
+    // 장면 (x, z) → 황도 (x, −z) · 황경 차이는 −180~180°
+    let d = Math.atan2(-Z, X) - jupLon;
+    d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
+    const s = g === 2 ? (d > 0 ? acc.L4 : acc.L5) : Math.abs(d) > (5 / 6) * Math.PI ? acc.hilda : null;
+    if (!s) continue;
+    const r = Math.hypot(X, Z);
+    s[0] += X / r; s[1] += Z / r; s[2] += r; s[3]++;
+  }
+  const median = v => { v.sort((p, q) => p - q); return v.length ? v[v.length >> 1] : NaN; };
+  const out = { beltR: median(radii[0]), kuiperR: median(radii[3]) };
+  for (const [k, s] of Object.entries(acc)) {
+    const u = Math.hypot(s[0], s[1]), r = s[2] / s[3];
+    out[k] = s[3] ? [s[0] / u * r, 0, s[1] / u * r] : null;
+  }
+  return out;
+}
+
 // ---------- 오르트 구름(모형) ----------
 export const OORT = { rIn: 3000, rOut: 100000, slope: -3.5 };
 
