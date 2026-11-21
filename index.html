@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>태양계</title>
+<link rel="stylesheet" href="src/style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="labels"></div>
+
+<header id="clock">
+  <div id="date"></div>
+  <div id="rate-text"></div>
+</header>
+
+<nav id="panel">
+  <div id="bodies"></div>
+  <div id="time">
+    <button id="live" type="button">실시간</button>
+    <input id="rate" type="range" min="0" max="14" step="1" value="7" aria-label="시간 빠르기">
+    <input id="when" type="datetime-local" aria-label="날짜와 시각">
+  </div>
+</nav>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

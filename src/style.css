@@ -1,0 +1,44 @@
+:root {
+  --bg: #000;
+  --fg: #f2f4f8;
+  --dim: #aab3c2;
+  --panel: rgba(14, 18, 26, 0.82);
+  --line: rgba(255, 255, 255, 0.16);
+  --accent: #7cc4ff;
+  --accent-fg: #04121f;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+#labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.label { position: absolute; left: 0; top: 0; pointer-events: auto; border: 0; background: none; color: var(--fg);
+  padding: 0; cursor: pointer; font: inherit; will-change: transform; }
+.label .ring { position: absolute; left: 0; top: 0; border: 1.5px solid currentColor; border-radius: 50%;
+  transform: translate(-50%, -50%); }
+.label .name { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 14px; font-weight: 600;
+  text-shadow: 0 0 4px #000, 0 0 2px #000; }
+/* 누를 수 있는 범위(44px) — 보이지 않는 원 */
+.label::before { content: ""; position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; border-radius: 50%; }
+.label.focus .name { color: var(--accent); }
+
+#clock { position: fixed; left: 0; top: 0; padding: max(12px, env(safe-area-inset-top)) 16px 8px; pointer-events: none;
+  text-shadow: 0 0 6px #000; }
+#date { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#rate-text { font-size: 13px; color: var(--dim); margin-top: 2px; }
+
+#panel { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 16px max(10px, env(safe-area-inset-bottom));
+  background: var(--panel); border-top: 1px solid var(--line); backdrop-filter: blur(8px); }
+#bodies { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+@media (min-width: 760px) { #bodies { grid-template-columns: repeat(10, 1fr); } }
+button { font: inherit; }
+#bodies button, #live { min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: transparent;
+  color: var(--fg); font-size: 14px; padding: 0 6px; cursor: pointer; }
+#bodies button[aria-pressed="true"], #live[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg);
+  border-color: var(--accent); font-weight: 700; }
+#time { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+#live { flex: none; padding: 0 12px; }
+#rate { flex: 1; min-width: 0; height: 44px; accent-color: var(--accent); }
+#when { flex: none; min-height: 44px; max-width: 46%; border: 1px solid var(--line); border-radius: 10px;
+  background: transparent; color: var(--fg); padding: 0 8px; font-size: 14px; color-scheme: dark; }
