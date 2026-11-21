@@ -33,7 +33,7 @@ scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
-const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn']);
+const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon']);
 const texLoader = new THREE.TextureLoader();
 // 지도를 받아 질감으로 돌려준다(Promise). 받은 뒤에 재질에 넣는 것은 부르는 쪽이 한다.
 function loadTexture(url) {
@@ -74,7 +74,7 @@ function ellipsoidGeometry(re, rp) {
 // 금성: Magellan 레이더 지도(흑백, 레이더 반사 세기 — 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형이 없어 돌리지 않는다(단색이라 보이지 않음)
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형은 달만 있다(ROTATED_MOONS). 나머지는 단색이라 돌려도 보이지 않는다
 const ALL = [...BODIES, ...MOONS];
 const bodies = ALL.map(b => {
   const geo = b.parent ? new THREE.SphereGeometry(b.radius, 48, 24) : ellipsoidGeometry(b.re, b.rp);
@@ -225,6 +225,15 @@ const state = {
 const basis = new THREE.Matrix4(), vx = new THREE.Vector3(), vy = new THREE.Vector3(), vz = new THREE.Vector3();
 // 위성이 있는 행성: 궤도 요소가 주는 점은 계 질량중심 → 행성 중심은 위성 질량만큼 반대로 옮긴다(지구는 약 4700km)
 const PARENTS = [...new Set(MOONS.map(m => m.parent))];
+const ROTATED_MOONS = new Set(['moon']);
+// 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
+function orient(b, jd) {
+  const { pole, prime, east } = bodyAxes(b.key, jd);
+  vx.fromArray(eclipticToScene(prime));
+  vy.fromArray(eclipticToScene(pole));
+  vz.fromArray(eclipticToScene(east)).negate();
+  b.mesh.quaternion.setFromRotationMatrix(basis.makeBasis(vx, vy, vz));
+}
 function updatePositions(jd) {
   const sys = {};
   for (const k of PARENTS) sys[k] = systemOffsets(k, jd);
@@ -232,17 +241,13 @@ function updatePositions(jd) {
     if (b.parent) continue; // 위성은 행성이 다 옮겨진 뒤에(아래)
     const h = heliocentric(b.key, jd).map(v => v * AU_KM), o = sys[b.key]?.planet ?? [0, 0, 0];
     b.pos = eclipticToScene([h[0] + o[0], h[1] + o[1], h[2] + o[2]]);
-    // 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
-    const { pole, prime, east } = bodyAxes(b.key, jd);
-    vx.fromArray(eclipticToScene(prime));
-    vy.fromArray(eclipticToScene(pole));
-    vz.fromArray(eclipticToScene(east)).negate();
-    b.mesh.quaternion.setFromRotationMatrix(basis.makeBasis(vx, vy, vz));
+    orient(b, jd);
   }
   for (const b of bodies) {
     if (!b.parent) continue;
     const c = byKey[b.parent].pos, r = eclipticToScene(sys[b.parent].moons[b.key]);
     b.pos = [c[0] + r[0], c[1] + r[1], c[2] + r[2]];
+    if (ROTATED_MOONS.has(b.key)) orient(b, jd);
   }
 }
 

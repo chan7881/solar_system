@@ -19,6 +19,7 @@ SOURCES = {
     'earth': 'earth5400.jpg',     # NASA Blue Marble NG 2004-04 topo·bathy
     'mars': 'mars925.tif',        # USGS Viking Global Color Mosaic 925m
     'jupiter': 'jupiter.tif',     # NASA/JPL/SSI PIA07782
+    'moon': 'moon/lroc_color_poles_2k.tif',  # NASA SVS CGI Moon Kit (LROC WAC 색 + 극 지역 LOLA 보완)
 }
 
 

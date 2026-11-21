@@ -16,11 +16,12 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 위성 20개(2026-11-21, 화면 승인) — 달·포보스·데이모스·갈릴레이 4·토성 7(미마스~이아페투스)·천왕성 5·트리톤. 단색 구, 이름표·궤도선, 위성이 있는 계에 가면 조작부에 위성 단추 줄.
 달은 ELP 주요 항(Horizons와 0.01°), 나머지는 Horizons 1800~2050 자료에 맞춘 식(`tools/fit_moons.py` → `src/moon_fits.js`, 따로 둔 자료로 최대 0.18°, 미마스만 1.06°). 지구·목성 등은 계 질량중심에서 위성 질량만큼 옮긴 행성 중심(지구 약 4700km).
 위성 검토 반영(2026-11-21) — 궤도선은 고정 격자 시각의 점을 두고 새로 들어온 점만 셈(토성계 한 그림 틀 4.4ms→0.1ms), 날아가기는 위성 줄을 바꾼 뒤 거리를 잼, 이름표 겹침은 이름 상자로 판정.
+달 표면·자세(2026-11-21) — NASA CGI Moon Kit 색 지도, IAU 2015 자전 모형에 주기 항 E1~E13(칭동). 지구에서 본 원판 가운데·태양 직하점이 Horizons와 최대 0.011°(`tests/moon_rot.test.mjs`, 주기 항을 빼면 10개 중 10개 실패), 화면 속 달 구에서 잰 지구 쪽 점도 동경 352.934°·남위 4.627° 대 Horizons 352.933°·4.629°.
 저장소 `chan7881/solar_system`(공개).
 
 ## 남은 일
 
-1. 위성 다음 단계 후보: 달 표면 지도·자세(IAU) · 타이탄 대기 끄기(`SURFACE_UNDER`) · 포보스·데이모스는 지금 구(실제는 감자 모양)
+1. 위성 다음 단계 후보: 타이탄 대기 끄기(`SURFACE_UNDER`) · 포보스·데이모스는 지금 구(실제는 감자 모양)
 2. 소천체 · 도구(크기 비교·거리 재기)
 - 지도 위도는 행성 중심 위도 — 몸체는 꼭짓점 방향을 그대로 두고 타원체 거리로 옮겨 만든다(`ellipsoidGeometry`). 지도를 새로 넣을 때 측지 위도면 바꿔 넣는다.
 - 고리 셰이더(`src/main.js`)는 `src/rings.js` 식을 손으로 옮긴 것이라 테스트가 셰이더 쪽은 못 잡는다 — 식을 고치면 둘 다
@@ -36,7 +37,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `tools/fetch_moons.py` · `tools/fit_moons.py` | Horizons 위성 자료 받기(`원본/moons/`, git 밖 · 서버가 자주 끊겨 `rev`로 두 벌 병렬) → 평균 궤도 식 맞추기(따로 둔 반 칸 밀린 자료로 오차 보고) |
 | `src/rings.js` · `tools/make_rings.py` | 고리 단면(`textures/saturn_rings.json`)·밝기·비침·그림자·밉맵의 순수 함수. 원본 엄폐 자료는 `원본/rings/`(git 밖) |
 | `textures/` · `tools/make_textures.py` · `tools/make_saturn.py` · `tools/make_venus.py` | 표면 지도 2K JPG와 출처(`textures/출처.md`). 원본(수백 MB)은 git 밖 — 주소는 출처.md, 줄이기는 스크립트 |
-| `tests/` | `npm test` — JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
+| `tests/` | `npm test` — 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
 
 - 실행: 폴더에서 `python -m http.server 8731 --bind 127.0.0.1` → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)
 - 단위는 km, **초점 천체가 원점**. 위치는 JS 배정밀도로 계산해 그리기 직전에 초점 위치를 뺀다. 궤도선은 행성 기준 상대 좌표.
