@@ -22,13 +22,15 @@ def main(src: Path):
     im = Image.open(src)
     if im.mode != 'L':
         raise SystemExit(f'8비트 흑백이 아님({im.mode})')
-    a = np.asarray(im, dtype=np.float32)
+    a = np.asarray(im)  # uint8 그대로(실수로 바꾸면 원본 한 장이 0.7GB)
     print(f'{src.name} {im.size} 빈 곳 {(a == 0).mean():.1%}')
-    # 빈 곳 가장자리 몇 화소는 어둡게 깎여 있다(평균 106 대 전체 129) — 깎아 내고 빈 곳으로 친다
-    valid = binary_erosion(a > 0, iterations=EDGE).astype(np.float32)
+    # 빈 곳 가장자리 몇 화소는 어둡게 깎여 있다(평균 106 대 전체 129) — 깎아 내고 빈 곳으로 친다.
+    # 그림 테두리(±180°·극)는 빈 곳이 아니므로 border_value=1
+    valid = binary_erosion(a > 0, iterations=EDGE, border_value=1)
     # 평균에서 빈 곳을 빼고 줄인다: (값의 상자 평균) / (유효 비율의 상자 평균)
-    box = lambda x: np.asarray(Image.fromarray(x, 'F').resize(SIZE, Image.BOX))
-    s, w = box(a * valid), box(valid)
+    box = lambda x: np.asarray(Image.fromarray(x).resize(SIZE, Image.BOX), dtype=np.float32)
+    s = box(np.where(valid, a, 0).astype(np.float32))
+    w = box(valid.astype(np.float32))
     out = np.where(w > 0.5, s / np.maximum(w, 1e-6), 0)
     have = (w > 0.5).astype(np.float32)
     print(f'줄인 뒤 빈 칸 {1 - have.mean():.2%}')

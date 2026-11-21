@@ -34,14 +34,22 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
 const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn']);
 const texLoader = new THREE.TextureLoader();
-function loadSurface(key, mat) {
-  texLoader.load(`textures/${key}_2k.jpg`, tex => {
+// 지도를 받아 질감으로 돌려준다(Promise). 받은 뒤에 재질에 넣는 것은 부르는 쪽이 한다.
+function loadTexture(url) {
+  return new Promise((resolve, reject) => texLoader.load(url, tex => {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    mat.map = tex;
-    mat.color.set(0xffffff);
-    mat.needsUpdate = true;
-  }, undefined, () => console.warn(`표면 지도를 못 불러옴: textures/${key}_2k.jpg — 단색으로 둔다`));
+    resolve(tex);
+  }, undefined, reject));
+}
+function setMap(mat, tex, color) {
+  mat.map = tex;
+  mat.color.set(tex ? 0xffffff : color);
+  mat.needsUpdate = true;
+}
+function loadSurface(key, mat) {
+  const url = `textures/${key}_2k.jpg`;
+  loadTexture(url).then(tex => setMap(mat, tex), () => console.warn(`표면 지도를 못 불러옴: ${url} — 단색으로 둔다`));
 }
 
 // 회전 타원체 몸체. 구의 꼭짓점 방향(지도의 v = 행성 중심 위도)을 그대로 두고 그 방향의 타원체 거리로 옮긴다 —
@@ -276,6 +284,7 @@ function flyTo(key, opts = {}) {
   state.focus = key;
   controls.enabled = false;
   markFocus();
+  updateAtmoButton();
 }
 
 function focusPosition(now) {
@@ -298,6 +307,7 @@ function focusPosition(now) {
     state.fly = null;
     controls.enabled = true;
     controls.minDistance = byKey[state.focus].radius * 1.15;
+    updateAtmoButton();
     if (f.next) flyTo(f.next);
   }
   return [a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m, a[2] + (b[2] - a[2]) * m];
@@ -380,24 +390,27 @@ function markFocus() {
 
 // 대기 켜기·끄기 — 표면이 대기에 가려진 천체에 다가가 있을 때만 단추를 보인다
 const atmoBtn = document.getElementById('atmo');
-const surfaceTex = {};
+const surfaceTex = {}; // key → Promise<Texture>
 function applyAtmosphere() {
   atmoBtn.textContent = state.atmosphere ? '대기 끄기' : '대기 켜기';
   atmoBtn.setAttribute('aria-pressed', String(!state.atmosphere));
   for (const [key, url] of Object.entries(SURFACE_UNDER)) {
-    const mat = byKey[key].mesh.material;
-    if (state.atmosphere) { mat.map = null; mat.color.set(byKey[key].color); mat.needsUpdate = true; continue; }
-    if (surfaceTex[key]) { mat.map = surfaceTex[key]; mat.color.set(0xffffff); mat.needsUpdate = true; continue; }
-    surfaceTex[key] = texLoader.load(url, tex => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      applyAtmosphere(); // 받는 사이에 다시 켰으면 그대로 대기
-    }, undefined, () => { delete surfaceTex[key]; console.warn(`표면 지도를 못 불러옴: ${url}`); });
+    const b = byKey[key];
+    if (state.atmosphere) { setMap(b.mesh.material, null, b.color); continue; }
+    // 받는 동안에는 대기 색을 그대로 둔다(빈 질감을 넣으면 까맣게 된다)
+    (surfaceTex[key] ||= loadTexture(url)).then(tex => {
+      if (!state.atmosphere) setMap(b.mesh.material, tex);
+    }, () => {
+      delete surfaceTex[key];
+      console.warn(`표면 지도를 못 불러옴: ${url} — 대기를 다시 켠다`);
+      state.atmosphere = true; applyAtmosphere(); // 단추와 화면이 어긋나지 않게
+    });
   }
 }
-atmoBtn.addEventListener('click', () => { state.atmosphere = !state.atmosphere; applyAtmosphere(); });
+atmoBtn.addEventListener('click', () => { state.atmosphere = !state.atmosphere; applyAtmosphere(); updateAtmoButton(); });
+// 표면이 가려진 천체에 다가가 있을 때 단추를 보인다. 대기를 끈 채로 떠나면 다시 켤 수 있게 계속 보인다
 function updateAtmoButton() {
-  atmoBtn.hidden = !(state.focus in SURFACE_UNDER) || !!state.fly;
+  atmoBtn.hidden = !!state.fly || (state.atmosphere && !(state.focus in SURFACE_UNDER));
 }
 
 const liveBtn = document.getElementById('live');
@@ -474,7 +487,6 @@ function step(now = performance.now()) {
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateLabels();
   updateClock();
-  updateAtmoButton();
 }
 
 function draw() { renderer.render(scene, camera); }
