@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { BODIES } from '../src/ephemeris.js';
 import { MOONS } from '../src/moons.js';
 import { SMALL_BODIES } from '../src/smallbodies.js';
-import { navGroups, systemOf, RATES, REALTIME, clampRate, rateText, advanceMs } from '../src/nav.js';
+import { navGroups, systemOf, RATES, REALTIME, clampRate, rateText, advanceMs, layerOf, bodyShown, defaultLayers } from '../src/nav.js';
 
-const ALL = [...BODIES, ...MOONS];
+// 행성과 그 위성만(카론처럼 왜행성의 위성은 SMALL_BODIES와 함께 시험한다)
+const ALL = [...BODIES, ...MOONS.filter(m => BODIES.some(b => b.key === m.parent))];
 
 test('행성은 공전 순서, 위성은 모행성 아래에만 들어간다', () => {
   const g = navGroups(ALL);
@@ -44,6 +45,21 @@ test('왜행성·혜성은 각각 묶이고 목록 순서를 지킨다 — 기�
   assert.deepEqual(g.dwarfs.map(e => e.body.key), ['ceres', 'pluto', 'haumea', 'makemake', 'eris']);
   assert.deepEqual(g.comets.map(e => e.body.key), ['halley', 'encke', 'churyumov', 'swifttuttle', 'halebopp']);
   assert.deepEqual(g.other.map(e => e.body.key), ['orphan']);
+});
+
+test('카론은 명왕성 아래 — 왜행성 레이어를 따르고, 꺼도 명왕성계를 보고 있으면 남는다', () => {
+  const list = [...BODIES, ...MOONS, ...SMALL_BODIES];
+  const g = navGroups(list);
+  assert.deepEqual(g.dwarfs.find(e => e.body.key === 'pluto').moons.map(m => m.key), ['charon']);
+  assert.ok(g.dwarfs.filter(e => e.body.key !== 'pluto').every(e => e.moons.length === 0));
+  assert.equal(g.other.length, 0);
+  assert.equal(systemOf(list, 'charon'), 'pluto');
+  assert.equal(systemOf(list, 'pluto'), 'pluto');
+  assert.equal(layerOf(list, 'charon'), 'dwarfs');
+  const L = { ...defaultLayers(), dwarfs: false };
+  assert.equal(bodyShown(list, 'charon', L, 'sun'), false);
+  assert.equal(bodyShown(list, 'charon', L, 'pluto'), true);
+  assert.equal(bodyShown(list, 'pluto', L, 'charon'), true);
 });
 
 test('펼칠 계: 위성이면 모천체, 위성이 있는 행성은 자기, 없으면 null', () => {

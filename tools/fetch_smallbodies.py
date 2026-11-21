@@ -9,7 +9,7 @@
 2) 왜행성·혜성: Horizons 태양 중심 접촉 궤도 요소(J2000 황도), 1800~2051년 1년 간격 → src/sb_elements.js
    (손으로 고치지 않는다). 원본 응답은 원본/smallbodies/(git 밖).
 
-실행: python tools/fetch_smallbodies.py [points] [elements]   (인자 없으면 둘 다)
+실행: python tools/fetch_smallbodies.py [points] [elements [key ...]] [check]   (인자 없으면 points·elements)
 """
 import json, struct, sys, time, urllib.parse, urllib.request
 from pathlib import Path
@@ -21,9 +21,11 @@ H_MAX = 14
 MESH_BODIES = {'1', '134340', '136199', '136108', '136472'}  # 세레스·명왕성·에리스·하우메아·마케마케
 FIELDS = ['pdes', 'class', 'H', 'a', 'e', 'i', 'om', 'w', 'ma', 'epoch', 'condition_code']
 
-# key: (Horizons COMMAND, 시작 시각) — 명왕성은 Horizons 자료가 1800-01-03부터
+# key: (Horizons COMMAND, 시작 시각) — 명왕성은 Horizons 자료가 1800-01-03부터.
+# 명왕성은 명왕성-카론 계 질량중심(9)의 요소 — 몸체(999) 요소에는 카론 둘레를 도는 6.4일 흔들림이 섞인다.
+#   몸체 위치는 src/moons.js systemOffsets가 카론 질량만큼 옮긴다(행성과 같은 방식).
 TARGETS = {
-    'ceres': ('1;', '1800-01-01'), 'pluto': ('999', '1800-01-04'), 'eris': ('136199;', '1800-01-01'),
+    'ceres': ('1;', '1800-01-01'), 'pluto': ('9', '1800-01-04'), 'eris': ('136199;', '1800-01-01'),
     'haumea': ('136108;', '1800-01-01'), 'makemake': ('136472;', '1800-01-01'),
     'halley': ('DES=1P; CAP;', '1800-01-01'), 'encke': ('DES=2P; CAP;', '1800-01-01'),
     'churyumov': ('DES=67P; CAP;', '1800-01-01'), 'swifttuttle': ('DES=109P; CAP;', '1800-01-01'),
@@ -80,9 +82,15 @@ def points():
     print('소행성대 %d · 힐다 %d · 트로이 %d · 카이퍼대 %d (뺀 것 %d)' % (*count, skipped))
 
 
-def elements():
+def elements(only=()):
+    """only: 이 key들만 새로 받고 나머지는 지금 src/sb_elements.js 값을 그대로 둔다."""
     res = {}
+    if only:
+        t = (ROOT / 'src' / 'sb_elements.js').read_text(encoding='utf-8')
+        res = json.loads(t[t.index('export default ') + 15:].rstrip().rstrip(';'))
     for key, (cmd, start) in TARGETS.items():
+        if only and key not in only:
+            continue
         q = {'format': 'text', 'COMMAND': f"'{cmd}'", 'CENTER': "'500@10'", 'EPHEM_TYPE': 'ELEMENTS',
              'START_TIME': f"'{start}'", 'STOP_TIME': "'2051-01-04'", 'STEP_SIZE': "'1 y'",
              'REF_PLANE': 'ECLIPTIC', 'REF_SYSTEM': 'ICRF', 'CSV_FORMAT': 'YES', 'OUT_UNITS': 'AU-D', 'TIME_TYPE': 'TDB'}
@@ -118,6 +126,7 @@ def check():
     """테스트용 Horizons 위치(태양 중심, J2000 황도, AU) → tests/horizons_smallbodies.txt"""
     lines = ['# key 날짜(TDB) x y z  — JPL Horizons VECTORS, CENTER 500@10, J2000 황도, AU (tools/fetch_smallbodies.py check)']
     cmds = {k: c for k, (c, _) in TARGETS.items()} | {k: c for c, k in CHECK_POINTS.items()}
+    cmds['pluto'] = '999'  # 기준은 명왕성 몸체 — 요소는 질량중심(9)이라 둘 차(약 2,100km)는 테스트 허용 오차 안
     for key, cmd in cmds.items():
         dates = CHECK_DATES if key not in CHECK_POINTS.values() else ['1801-03-10 06:00', '1900-01-01 00:00', '2026-11-21 00:00', '2050-09-30 00:00']
         if key == 'pluto':
@@ -138,9 +147,14 @@ def check():
 if __name__ == '__main__':
     RAW.mkdir(parents=True, exist_ok=True)
     args = sys.argv[1:] or ['points', 'elements']
+    if not {'points', 'elements', 'check'} & set(args):
+        raise SystemExit('쓰는 법: fetch_smallbodies.py [points] [elements [천체…]] [check]')
     if 'points' in args:
         points()
     if 'elements' in args:
-        elements()
+        bad = [a for a in args if a not in TARGETS and a not in ('points', 'elements', 'check')]
+        if bad:
+            raise SystemExit(f'모르는 천체: {bad} — {list(TARGETS)}')
+        elements([a for a in args if a in TARGETS])
     if 'check' in args:
         check()

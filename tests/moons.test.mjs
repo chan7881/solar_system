@@ -1,15 +1,16 @@
 // 위성 위치 — 기준값: JPL Horizons(행성 중심 500@<행성>, J2000 황도, km), tests/horizons_moons.txt(2026-11-21에 받음).
 // 날짜 4개(1950·2000·2026·2045년)는 맞추기(tools/fit_moons.py, 3.14일 간격 격자)에 쓴 시각이 아니다.
-// 마지막 줄들(399 3)은 지구-달 질량중심에서 본 지구 중심.
+// 줄 399 3은 지구-달 질량중심에서 본 지구 중심, 999 9는 명왕성-카론 질량중심에서 본 명왕성 중심(2026-11-22에 받음).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { MOONS, moonPosition, moonTrail, moonTrailCache, moonPeriod, systemOffsets } from '../src/moons.js';
 import { bodyAxes } from '../src/ephemeris.js';
+import { SMALL_BODIES } from '../src/smallbodies.js';
 
 const ID = { 301: 'moon', 401: 'phobos', 402: 'deimos', 501: 'io', 502: 'europa', 503: 'ganymede', 504: 'callisto',
   601: 'mimas', 602: 'enceladus', 603: 'tethys', 604: 'dione', 605: 'rhea', 606: 'titan', 608: 'iapetus',
-  701: 'ariel', 702: 'umbriel', 703: 'titania', 704: 'oberon', 705: 'miranda', 801: 'triton' };
+  701: 'ariel', 702: 'umbriel', 703: 'titania', 704: 'oberon', 705: 'miranda', 801: 'triton', 901: 'charon' };
 // 허용 오차(행성에서 본 방향, °) — 맞춘 식의 따로 둔 자료 최대 오차(미마스 1.06° · 나머지 0.18° 이하, 2026-11-21 tools/fit_moons.py)의 약 2배
 const TOL_DEG = { moon: 0.05, mimas: 2.0 };
 const TOL_DEFAULT = 0.35;
@@ -21,10 +22,10 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const sepDeg = (a, b) => Math.atan2(norm(cross(a, b)), dot(a, b)) * 180 / Math.PI;
 
-test('기준값이 위성 20개 × 날짜 4개 + 지구 4줄', () => {
-  assert.equal(rows.length, 84);
-  assert.equal(new Set(rows.filter(r => ID[r.id]).map(r => r.id)).size, 20);
-  assert.equal(MOONS.length, 20);
+test('기준값이 위성 21개 × 날짜 4개 + 지구 4줄 + 명왕성 4줄', () => {
+  assert.equal(rows.length, 92);
+  assert.equal(new Set(rows.filter(r => ID[r.id]).map(r => r.id)).size, 21);
+  assert.equal(MOONS.length, 21);
 });
 
 for (const { id, jd, r } of rows.filter(r => ID[r.id])) {
@@ -44,6 +45,19 @@ test('지구 중심 = 지구-달 질량중심 − 달 위치 × 질량비 (Horiz
     const d = norm(o.map((v, i) => v - r[i]));
     assert.ok(d < 5, `JD ${jd}: ${d.toFixed(1)}km`);
     assert.ok(dot(o, moonPosition('moon', jd)) < 0, '지구는 질량중심에서 달 반대쪽');
+  }
+});
+
+// 카론은 명왕성 질량의 12%라 질량중심이 명왕성 몸체 밖(약 2,100km — 명왕성 반지름 1,188km)에 있다
+test('명왕성 중심 = 계 질량중심 − 카론 위치 × 질량비 (Horizons와 10km 안)', () => {
+  const pl = rows.filter(r => r.id === 999);
+  assert.equal(pl.length, 4);
+  for (const { jd, r } of pl) {
+    const o = systemOffsets('pluto', jd).planet;
+    const d = norm(o.map((v, i) => v - r[i]));
+    assert.ok(d < 10, `JD ${jd}: ${d.toFixed(1)}km`);
+    assert.ok(norm(o) > SMALL_BODIES.find(b => b.key === 'pluto').radius, '질량중심이 명왕성 몸체 밖');
+    assert.ok(dot(o, moonPosition('charon', jd)) < 0, '명왕성은 질량중심에서 카론 반대쪽');
   }
 });
 

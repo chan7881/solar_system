@@ -34,10 +34,12 @@ export const MOONS = [
   { key: 'titania',   name: '티타니아', parent: 'uranus',  radius: 788.9,   gm: 226.9,     color: 0xa39e96 },
   { key: 'oberon',    name: '오베론',   parent: 'uranus',  radius: 761.4,   gm: 205.3,     color: 0x968e86 },
   { key: 'triton',    name: '트리톤',   parent: 'neptune', radius: 1352.60, gm: 1428.49546, color: 0xc7bfb8 },
+  { key: 'charon',    name: '카론',     parent: 'pluto',   radius: 606.0,   gm: 106.1,     color: 0x9c9a96 }, // GM은 PLU060(Brozović & Jacobson 2024)
 ];
 
-// 행성(몸체만)의 GM(km³/s²) — 질량중심 → 행성 중심 보정용. JPL DE440 / 위성 해(JUP365·SAT441·URA111·NEP097)
-export const PLANET_GM = { earth: 398600.435, mars: 42828.37, jupiter: 126686531.9, saturn: 37931206.2, uranus: 5793951.3, neptune: 6835099.5 };
+// 행성(몸체만)의 GM(km³/s²) — 질량중심 → 행성 중심 보정용. JPL DE440 / 위성 해(JUP365·SAT441·URA111·NEP097·PLU060)
+// 명왕성도 계 질량중심의 궤도 요소를 받으므로(tools/fetch_smallbodies.py) 같은 보정을 한다 — 카론이 무거워 약 2,100km
+export const PLANET_GM = { earth: 398600.435, mars: 42828.37, jupiter: 126686531.9, saturn: 37931206.2, uranus: 5793951.3, neptune: 6835099.5, pluto: 869.3 };
 
 const norm360 = x => ((x % 360) + 360) % 360;
 

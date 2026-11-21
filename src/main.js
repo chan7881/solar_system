@@ -34,7 +34,7 @@ scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
-const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon']);
+const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon', 'pluto', 'charon']);
 const texLoader = new THREE.TextureLoader();
 // 지도를 받아 질감으로 돌려준다(Promise). 받은 뒤에 재질에 넣는 것은 부르는 쪽이 한다.
 function loadTexture(url) {
@@ -76,7 +76,7 @@ function ellipsoidGeometry(re, rp) {
 // 타이탄: Cassini ISS 근적외선(938nm) 모자이크(흑백 — 연무를 뚫는 파장으로 본 밝기, 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·타이탄·포보스·데이모스). 나머지는 단색이라 돌려도 보이지 않는다
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·타이탄·포보스·데이모스·카론). 나머지는 단색이라 돌려도 보이지 않는다
 // 포보스·데이모스는 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
 function loadShape(b) {
   fetch(`textures/${b.key}_shape.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
@@ -255,7 +255,8 @@ const state = {
 
 // ---------- 위치 ----------
 const basis = new THREE.Matrix4(), vx = new THREE.Vector3(), vy = new THREE.Vector3(), vz = new THREE.Vector3();
-// 위성이 있는 행성: 궤도 요소가 주는 점은 계 질량중심 → 행성 중심은 위성 질량만큼 반대로 옮긴다(지구는 약 4700km)
+// 위성이 있는 행성·왜행성: 궤도 요소가 주는 점은 계 질량중심 → 몸체 중심은 위성 질량만큼 반대로 옮긴다(지구 약 4700km·명왕성 약 2100km)
+// ⚠️ 위성을 넣는 천체는 요소도 질량중심으로 받아야 한다(tools/fetch_smallbodies.py TARGETS — 명왕성은 '9'). 몸체 요소에 이 보정을 더하면 두 번 옮긴다.
 const PARENTS = [...new Set(MOONS.map(m => m.parent))];
 // 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
 function orient(b, jd) {

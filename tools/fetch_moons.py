@@ -12,7 +12,7 @@ from pathlib import Path
 OUT = Path(__file__).resolve().parent.parent / '원본' / 'moons'
 MOONS = {401: 499, 402: 499, 501: 599, 502: 599, 503: 599, 504: 599,
          601: 699, 602: 699, 603: 699, 604: 699, 605: 699, 606: 699, 608: 699,
-         701: 799, 702: 799, 703: 799, 704: 799, 705: 799, 801: 899}
+         701: 799, 702: 799, 703: 799, 704: 799, 705: 799, 801: 899, 901: 999}
 STEP_D = 3.1416  # 일 — 어느 위성 주기와도 맞물리지 않게
 CHUNK_Y = 20
 
@@ -60,8 +60,8 @@ def main():
                 # check: 시작을 간격의 절반만큼 민다(하루를 넘는 반 간격은 날짜를 더한다)
                 half_d = STEP_D / 2
                 start = f'{y}-01-{1 + int(half_d):02d} {int((half_d % 1) * 24):02d}:{int(((half_d % 1) * 24 % 1) * 60):02d}'
-            if y == 1800:  # 트리톤 등은 Horizons 자료가 1800-01-02부터 — 첫 구간은 이틀 늦게
-                d = int(start[8:10]) + 2
+            if y == 1800:  # 트리톤 등은 Horizons 자료가 1800-01-02부터, 카론(명왕성 중심)은 01-04부터 — 첫 구간을 늦춘다
+                d = int(start[8:10]) + (4 if center == 999 else 2)
                 start = start[:8] + f'{d:02d}' + start[10:]
             r = fetch(mid, center, start, f'{y1}-01-01', step_min)
             if rows and r and r[0].split()[0] == rows[-1].split()[0]:
