@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes } from './ephemeris.js';
+import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 
 const MIN = 60, HOUR = 3600, DAY = 86400;
 // 시간 빠르기(실제 1초에 흐르는 초) — 슬라이더 칸
@@ -68,6 +69,111 @@ const bodies = BODIES.map(b => {
   return { ...b, mesh, trail, pos: [0, 0, 0], trailJd: NaN };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
+
+// ---------- 토성 고리 ----------
+// 토성 몸체의 자식으로 적도면(로컬 XZ)에 둔다. 밝기·비침·그림자 식은 src/rings.js와 같다(테스트는 그쪽에).
+// 계산은 토성 로컬 좌표(km): 고리면 법선 = +Y, 해·카메라 방향은 매 장면 CPU에서 로컬로 바꿔 넣는다.
+const ringU = {
+  uTau: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
+  uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
+  uRp: { value: byKey.saturn.radius }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
+};
+const RING_GLSL = /* glsl */`
+  uniform sampler2D uTau; uniform float uR0, uR1;
+  uniform vec3 uSunL;
+  float ringTau(float r) {
+    if (r < uR0 || r > uR1) return 0.0;
+    return texture2D(uTau, vec2((r - uR0) / (uR1 - uR0), 0.5)).r;
+  }`;
+const ringMat = new THREE.ShaderMaterial({
+  uniforms: ringU,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  // 미리 곱한 알파: 결과 = 고리 빛 + 배경 × 비침(T)
+  blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+  vertexShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    varying vec3 vP;
+    void main() {
+      vP = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      #include <logdepthbuf_vertex>
+    }`,
+  fragmentShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    ${RING_GLSL}
+    uniform vec3 uCamL; uniform float uRp, uLight;
+    varying vec3 vP;
+    void main() {
+      #include <logdepthbuf_fragment>
+      float r = length(vP.xz);
+      float tau = ringTau(r);
+      if (tau <= 0.0) discard;
+      vec3 v = normalize(uCamL - vP);
+      float mu = max(1e-3, abs(v.y)), mu0 = max(1e-3, abs(uSunL.y));
+      float T = exp(-tau / mu);
+      float F;
+      if (v.y * uSunL.y > 0.0) F = 2.0 * mu0 / (mu + mu0) * (1.0 - exp(-tau * (1.0 / mu + 1.0 / mu0)));
+      else if (abs(mu - mu0) < 1e-4) F = 2.0 * tau / mu * T;
+      else F = 2.0 * mu0 / (mu - mu0) * (T - exp(-tau / mu0));
+      // 토성 그림자(해 쪽으로 간 빛줄기가 몸체에 막힘)
+      float b = dot(vP, uSunL);
+      if (b < 0.0 && b * b - (dot(vP, vP) - uRp * uRp) > 0.0) F = 0.0;
+      // 고리별 반사율·색(src/rings.js RING_ALBEDO)
+      vec4 a = r < ${RING_EDGES.cb.toFixed(1)} ? vec4(${albedoVec(0)})
+             : r < ${RING_EDGES.bOut.toFixed(1)} ? vec4(${albedoVec(1)})
+             : r < ${RING_EDGES.aIn.toFixed(1)} ? vec4(${albedoVec(2)}) : vec4(${albedoVec(3)});
+      gl_FragColor = vec4(a.rgb * a.a * F * uLight, 1.0 - T);
+      #include <colorspace_fragment>
+    }`,
+});
+// 색(tint)은 사진을 보고 고른 화면 색(sRGB)이라 선형 값으로 바꿔 넣는다
+function albedoVec(i) {
+  const { w, tint } = RING_ALBEDO[i], c = new THREE.Color().setRGB(...tint, THREE.SRGBColorSpace);
+  return [c.r, c.g, c.b, w].map(x => x.toFixed(4)).join(', ');
+}
+const ringMesh = new THREE.Mesh(new THREE.BufferGeometry(), ringMat);
+ringMesh.visible = false;
+byKey.saturn.mesh.add(ringMesh);
+
+// 토성 표면에 지는 고리 그림자: 표면 점에서 해 쪽 빛줄기가 고리면을 지나는 반지름의 τ로 햇빛을 줄인다
+byKey.saturn.mesh.material.onBeforeCompile = sh => {
+  Object.assign(sh.uniforms, { uTau: ringU.uTau, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL });
+  sh.vertexShader = 'varying vec3 vP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
+  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n` + sh.fragmentShader.replace('#include <opaque_fragment>', `
+    if (vP.y * uSunL.y < 0.0 && abs(uSunL.y) > 1e-6) {
+      vec3 q = vP - uSunL * (vP.y / uSunL.y);
+      outgoingLight *= exp(-ringTau(length(q.xz)) / abs(uSunL.y));
+    }
+    #include <opaque_fragment>`);
+};
+
+fetch('textures/saturn_rings.json').then(r => r.json()).then(p => {
+  // 멀리서 보면 수천 줄의 결이 화소보다 가늘어 물결무늬가 생긴다 → 밉맵. 투과율로 평균한 단계를 CPU에서 만든다
+  // (GPU 자동 밉맵은 τ를 그대로 평균해 간극이 메워지고, R16F는 모바일에서 자동 생성이 안 될 수 있다)
+  const half = a => Uint16Array.from(a, v => THREE.DataUtils.toHalfFloat(v));
+  const levels = ringMipLevels(p.tau);
+  const tex = new THREE.DataTexture(half(levels[0]), p.n, 1, THREE.RedFormat, THREE.HalfFloatType);
+  tex.mipmaps = levels.map(l => ({ data: half(l), width: l.length, height: 1 }));
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  ringU.uTau.value = tex; ringU.uR0.value = p.r0; ringU.uR1.value = p.r1;
+  // 고리 경계 밖(단면 양 끝의 잡음 수준 τ)은 그리지 않는다. XY → 로컬 XZ(법선 +Y = 북극)
+  ringMesh.geometry = new THREE.RingGeometry(RING_EDGES.cIn, RING_EDGES.aOut, 720, 1).rotateX(-Math.PI / 2);
+  ringMesh.visible = true;
+}).catch(e => console.warn('토성 고리 단면을 못 불러옴 — 고리 없이 둔다', e));
+
+const qInv = new THREE.Quaternion();
+function updateRings() {
+  const m = byKey.saturn.mesh;
+  qInv.copy(m.quaternion).invert();
+  ringU.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
+  ringU.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
+}
 
 // ---------- 상태 ----------
 const state = {
@@ -317,6 +423,7 @@ function step(now = performance.now()) {
   if (!state.fly) controls.update();
   else camera.lookAt(0, 0, 0);
   camera.updateMatrixWorld();
+  updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateLabels();
   updateClock();
 }
