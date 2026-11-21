@@ -1,7 +1,7 @@
 // 화면 — 크기·거리 모두 실제 비율(km). 초점 천체를 원점에 두고 그린다(위치 계산은 JS 배정밀도, 그리기 직전에 뺀다).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
-import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius } from './ephemeris.js';
+import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation } from './ephemeris.js';
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 
@@ -74,10 +74,10 @@ function ellipsoidGeometry(re, rp) {
 // 금성: Magellan 레이더 지도(흑백, 레이더 반사 세기 — 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형은 달만 있다(ROTATED_MOONS). 나머지는 단색이라 돌려도 보이지 않는다
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(지금은 달). 나머지는 단색이라 돌려도 보이지 않는다
 const ALL = [...BODIES, ...MOONS];
 const bodies = ALL.map(b => {
-  const geo = b.parent ? new THREE.SphereGeometry(b.radius, 48, 24) : ellipsoidGeometry(b.re, b.rp);
+  const geo = b.parent ? new THREE.SphereGeometry(b.radius, ...(TEXTURED.has(b.key) ? [96, 48] : [48, 24])) : ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
@@ -225,7 +225,6 @@ const state = {
 const basis = new THREE.Matrix4(), vx = new THREE.Vector3(), vy = new THREE.Vector3(), vz = new THREE.Vector3();
 // 위성이 있는 행성: 궤도 요소가 주는 점은 계 질량중심 → 행성 중심은 위성 질량만큼 반대로 옮긴다(지구는 약 4700km)
 const PARENTS = [...new Set(MOONS.map(m => m.parent))];
-const ROTATED_MOONS = new Set(['moon']);
 // 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
 function orient(b, jd) {
   const { pole, prime, east } = bodyAxes(b.key, jd);
@@ -247,7 +246,7 @@ function updatePositions(jd) {
     if (!b.parent) continue;
     const c = byKey[b.parent].pos, r = eclipticToScene(sys[b.parent].moons[b.key]);
     b.pos = [c[0] + r[0], c[1] + r[1], c[2] + r[2]];
-    if (ROTATED_MOONS.has(b.key)) orient(b, jd);
+    if (hasRotation(b.key)) orient(b, jd);
   }
 }
 

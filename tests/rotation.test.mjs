@@ -36,7 +36,7 @@ for (const { id, key, jd, lon, lat, lt } of rows) {
 }
 
 test('축이 오른손 정규 직교계(pole = prime × east)', () => {
-  for (const key of [...Object.values(ID), 'sun']) {
+  for (const key of [...Object.values(ID), 'sun', 'moon']) {
     const { pole: p, prime: x, east: y } = bodyAxes(key, 2461365.5);
     const cr = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
     for (let i = 0; i < 3; i++) assert.ok(Math.abs(cr[i] - p[i]) < 1e-12, key);
@@ -45,7 +45,7 @@ test('축이 오른손 정규 직교계(pole = prime × east)', () => {
 });
 
 test('자전 방향: 금성·천왕성만 거꾸로 — 황도 북쪽에서 볼 때 나머지는 반시계', () => {
-  for (const key of [...Object.values(ID), 'sun']) {
+  for (const key of [...Object.values(ID), 'sun', 'moon']) {
     // 1시간 동안 본초 자오선이 도는 방향과 황도 북극(z)의 관계
     const a = bodyAxes(key, 2461365.5).prime, b = bodyAxes(key, 2461365.5 + 1 / 24).prime;
     const spinZ = a[0] * b[1] - a[1] * b[0];

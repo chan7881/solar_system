@@ -143,6 +143,8 @@ const MOON_W = [3.5610, 0.1208, -0.0642, 0.0158, 0.0252, -0.0066, -0.0047, -0.00
 // J2000 황도 경사(IAU 1976, 84381.448″) — ICRF 적도 → J2000 황도
 const OBLIQUITY = 84381.448 / 3600 * DEG;
 
+export const hasRotation = key => key in ROTATION;
+
 // 극 RA·Dec와 W(°)
 export function rotationAngles(key, jd) {
   const r = ROTATION[key];
