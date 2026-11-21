@@ -30,7 +30,7 @@ const sunLight = new THREE.PointLight(0xffffff, 3, 0, 0);
 scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
-const bodies = BODIES.map((b, idx) => {
+const bodies = BODIES.map(b => {
   const geo = new THREE.SphereGeometry(b.radius, 96, 48);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
@@ -51,7 +51,7 @@ const bodies = BODIES.map((b, idx) => {
     trail.frustumCulled = false;
     scene.add(trail);
   }
-  return { ...b, idx, mesh, trail, pos: [0, 0, 0], trailJd: NaN };
+  return { ...b, mesh, trail, pos: [0, 0, 0], trailJd: NaN };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
 
@@ -102,7 +102,13 @@ const overviewDist = () => Math.max(33 * AU_KM / Math.tan(halfH()), 33 * AU_KM *
 // 날아가기 3단계 — ① 두 천체가 함께 보일 만큼 물러나고 ② 옆으로 옮겨 가고 ③ 다가간다.
 // 단계마다 걸리는 시간은 거리 배율(로그)에 비례한다. 이미 충분히 멀면 ①은 0초.
 function flyTo(key, opts = {}) {
-  if (state.fly) return; // 날아가는 중에는 새 요청을 받지 않는다(중간 위치에서 튀지 않게)
+  // 날아가는 중에 누르면 도착한 뒤에 이어서 간다(중간 위치에서 튀지 않게)
+  if (state.fly) { state.fly.next = key === state.fly.to ? null : key; return; }
+  // 손으로 돌리다 남은 관성을 먼저 털어 낸다 — 남겨 두면 도착한 뒤에 화면이 저절로 돈다
+  const damping = controls.enableDamping;
+  controls.enableDamping = false;
+  controls.update();
+  controls.enableDamping = damping;
   const from = state.focus;
   const d0 = camera.position.length();
   const d1 = opts.dist ?? viewDist(byKey[key]);
@@ -110,7 +116,7 @@ function flyTo(key, opts = {}) {
   const D = Math.max(d0, d1, (gap / Math.tan(Math.min(halfV(), halfH()))) * 1.3);
   const w = [Math.log(D / d0), gap > 0 ? 2 : 0, Math.log(D / d1)];
   const total = w[0] + w[1] + w[2] || 1;
-  const dur = opts.instant ? 0 : Math.min(3600, 900 + 260 * total);
+  const dur = Math.min(3600, 900 + 260 * total);
   const dir0 = camera.position.clone().normalize();
   const dir1 = opts.dir ? opts.dir.clone().normalize() : dir0.clone();
   state.fly = { from, to: key, t0: performance.now(), dur, d0, d1, D, cut: [w[0] / total, (w[0] + w[1]) / total], dir0, dir1 };
@@ -122,7 +128,8 @@ function flyTo(key, opts = {}) {
 function focusPosition(now) {
   const f = state.fly;
   if (!f) return byKey[state.focus].pos;
-  const s = f.dur ? Math.min(1, (now - f.t0) / f.dur) : 1;
+  // 그림 틀 시각이 누른 시각보다 앞설 수 있다 — 0 아래로 내려가면 거리가 NaN이 된다
+  const s = THREE.MathUtils.clamp((now - f.t0) / f.dur, 0, 1);
   const [c1, c2] = f.cut;
   const lerpLog = (x, y, t) => Math.exp(Math.log(x) + (Math.log(y) - Math.log(x)) * t);
   let d, m; // 카메라 거리, 옮겨 간 정도(0~1)
@@ -138,6 +145,7 @@ function focusPosition(now) {
     state.fly = null;
     controls.enabled = true;
     controls.minDistance = byKey[state.focus].radius * 1.15;
+    if (f.next) flyTo(f.next);
   }
   return [a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m, a[2] + (b[2] - a[2]) * m];
 }
@@ -171,8 +179,9 @@ function updateLabels() {
     tmp.applyMatrix4(camera.matrixWorldInverse);
     const front = tmp.z < 0;
     tmp.applyMatrix4(camera.projectionMatrix);
-    const visible = front && Math.abs(tmp.x) < 1.02 && Math.abs(tmp.y) < 1.02;
     const x = (tmp.x + 1) / 2 * W, y = (1 - tmp.y) / 2 * H;
+    // 조작부에 가린 아래쪽(viewH 밑)은 보이지 않는 것으로 친다
+    const visible = front && Math.abs(tmp.x) < 1.02 && y > -0.01 * H && y < viewH + 0.01 * H;
     const pr = (b.radius / dist) * ppr;
     b.pixelRadius = pr;
     const clash = placed.some(p => Math.hypot(p[0] - x, p[1] - y) < 26);
@@ -259,7 +268,7 @@ function updateClock() {
 // ---------- 한 장면 ----------
 let lastT = performance.now();
 function step(now = performance.now()) {
-  const dt = Math.min(0.25, (now - lastT) / 1000);
+  const dt = THREE.MathUtils.clamp((now - lastT) / 1000, 0, 0.25); // 그림 틀 시각이 앞설 수 있어 음수를 막는다
   lastT = now;
   if (state.live) state.simMs = Date.now();
   else state.simMs += RATES[state.rateIdx] * dt * 1000;
@@ -276,12 +285,12 @@ function step(now = performance.now()) {
     b.mesh.position.set(rel[0], rel[1], rel[2]);
     if (b.key === 'sun') sunLight.position.copy(b.mesh.position);
     if (b.trail) {
-      updateTrail(b, jd);
-      b.trail.position.copy(b.mesh.position);
       // 행성이 화면에서 커지면 궤도선이 행성을 뚫고 지나가 보이므로 흐리게 한다
       const pr = (b.radius / b.mesh.position.distanceTo(camera.position)) * ppr;
       b.trail.material.opacity = THREE.MathUtils.clamp(1 - (pr - 3) / 25, 0, 1);
       b.trail.visible = b.trail.material.opacity > 0.01;
+      if (b.trail.visible) updateTrail(b, jd); // 안 보이는 궤도선은 다시 계산하지 않는다
+      b.trail.position.copy(b.mesh.position);
     }
   }
   if (!state.fly) controls.update();
@@ -304,7 +313,10 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize);
+new ResizeObserver(resize).observe(panelEl); // 글꼴·안전 영역이 늦게 잡혀 조작부 높이가 바뀌는 경우
 resize();
+// 글꼴이 늦게 뜨면 이름 너비가 달라지므로 다시 잰다
+document.fonts?.ready.then(() => { for (const b of bodies) b.nameW = 0; });
 
 // 처음 화면: 태양계 전체
 camera.position.copy(OVERVIEW_DIR).multiplyScalar(overviewDist());
