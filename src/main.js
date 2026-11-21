@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius } from './ephemeris.js';
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
+import { MOONS, systemOffsets, moonTrail } from './moons.js';
 
 const MIN = 60, HOUR = 3600, DAY = 86400;
 // 시간 빠르기(실제 1초에 흐르는 초) — 슬라이더 칸
@@ -73,8 +74,10 @@ function ellipsoidGeometry(re, rp) {
 // 금성: Magellan 레이더 지도(흑백, 레이더 반사 세기 — 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg' };
 
-const bodies = BODIES.map(b => {
-  const geo = ellipsoidGeometry(b.re, b.rp);
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형이 없어 돌리지 않는다(단색이라 보이지 않음)
+const ALL = [...BODIES, ...MOONS.map(m => ({ ...m, re: m.radius, rp: m.radius }))];
+const bodies = ALL.map(b => {
+  const geo = b.parent ? new THREE.SphereGeometry(b.radius, 48, 24) : ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
@@ -220,10 +223,19 @@ const state = {
 
 // ---------- 위치 ----------
 const basis = new THREE.Matrix4(), vx = new THREE.Vector3(), vy = new THREE.Vector3(), vz = new THREE.Vector3();
+// 위성이 있는 행성: 궤도 요소가 주는 점은 계 질량중심 → 행성 중심은 위성 질량만큼 반대로 옮긴다(지구는 약 4700km)
+const PARENTS = [...new Set(MOONS.map(m => m.parent))];
 function updatePositions(jd) {
+  const sys = {};
+  for (const k of PARENTS) sys[k] = systemOffsets(k, jd);
   for (const b of bodies) {
-    const p = eclipticToScene(heliocentric(b.key, jd));
-    b.pos = [p[0] * AU_KM, p[1] * AU_KM, p[2] * AU_KM];
+    if (b.parent) {
+      const c = byKey[b.parent].pos, r = eclipticToScene(sys[b.parent].moons[b.key]);
+      b.pos = [c[0] + r[0], c[1] + r[1], c[2] + r[2]];
+      continue;
+    }
+    const h = heliocentric(b.key, jd).map(v => v * AU_KM), o = sys[b.key]?.planet ?? [0, 0, 0];
+    b.pos = eclipticToScene([h[0] + o[0], h[1] + o[1], h[2] + o[2]]);
     // 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
     const { pole, prime, east } = bodyAxes(b.key, jd);
     vx.fromArray(eclipticToScene(prime));
@@ -236,13 +248,15 @@ function updatePositions(jd) {
 function updateTrail(b, jd) {
   if (!b.trail || b.trailJd === jd) return;
   b.trailJd = jd;
-  const pts = orbitTrail(b.key, jd, TRAIL_N);
+  // 행성은 태양 중심(AU), 위성은 행성 중심(km) 궤도 — 위성 궤도선은 행성을 따라 움직이는 닫힌 고리로 보인다
+  const pts = b.parent ? moonTrail(b.key, jd, TRAIL_N) : orbitTrail(b.key, jd, TRAIL_N);
+  const scale = b.parent ? 1 : AU_KM;
   const p0 = pts[0];
   const arr = b.trail.geometry.attributes.position.array;
-  // 행성 기준 상대 좌표로 넣는다 — 행성 가까이에서도 float32 오차가 작다
+  // 천체 기준 상대 좌표로 넣는다 — 가까이에서도 float32 오차가 작다
   for (let k = 0; k <= TRAIL_N; k++) {
     const s = eclipticToScene([pts[k][0] - p0[0], pts[k][1] - p0[1], pts[k][2] - p0[2]]);
-    arr[k * 3] = s[0] * AU_KM; arr[k * 3 + 1] = s[1] * AU_KM; arr[k * 3 + 2] = s[2] * AU_KM;
+    arr[k * 3] = s[0] * scale; arr[k * 3 + 1] = s[1] * scale; arr[k * 3 + 2] = s[2] * scale;
   }
   b.trail.geometry.attributes.position.needsUpdate = true;
 }
@@ -315,7 +329,11 @@ function focusPosition(now) {
 
 // ---------- 이름표 ----------
 const labelLayer = document.getElementById('labels');
-const PRIORITY = ['sun', 'jupiter', 'saturn', 'earth', 'uranus', 'neptune', 'venus', 'mars', 'mercury'];
+// 겹치면 앞쪽이 이긴다 — 행성 다음에 위성(큰 것부터)
+const PRIORITY = ['sun', 'jupiter', 'saturn', 'earth', 'uranus', 'neptune', 'venus', 'mars', 'mercury',
+  ...MOONS.slice().sort((a, b) => b.radius - a.radius).map(m => m.key)];
+// 위성 이름표는 행성에서 화면으로 이만큼(px) 떨어져 보일 때만 — 멀리서 보면 행성 이름표에 겹쳐 묻힌다
+const MOON_SEP_PX = 28;
 for (const b of bodies) {
   const el = document.createElement('button');
   el.type = 'button';
@@ -329,26 +347,33 @@ for (const b of bodies) {
 }
 
 const tmp = new THREE.Vector3();
+// 천체의 화면 위치 — 앞뒤는 카메라 좌표로 판정한다(먼 천체는 투영 z가 반올림돼 1이 되므로 z<1로는 못 가린다)
+function project(b) {
+  tmp.copy(b.mesh.position);
+  const dist = tmp.distanceTo(camera.position);
+  tmp.applyMatrix4(camera.matrixWorldInverse);
+  const front = tmp.z < 0;
+  tmp.applyMatrix4(camera.projectionMatrix);
+  return { x: (tmp.x + 1) / 2 * innerWidth, y: (1 - tmp.y) / 2 * innerHeight, ndcX: tmp.x, front, dist };
+}
 function updateLabels() {
   const W = innerWidth, H = innerHeight;
   const ppr = pxPerRad();
   const placed = [];
   const order = [state.focus, ...PRIORITY.filter(k => k !== state.focus)];
+  const scr = {};
+  for (const b of bodies) scr[b.key] = project(b);
   for (const key of order) {
     const b = byKey[key];
-    tmp.copy(b.mesh.position);
-    const dist = tmp.distanceTo(camera.position);
-    // 앞뒤는 카메라 좌표로 판정한다 — 먼 천체는 투영 z가 반올림돼 1이 되므로 z<1로는 못 가린다
-    tmp.applyMatrix4(camera.matrixWorldInverse);
-    const front = tmp.z < 0;
-    tmp.applyMatrix4(camera.projectionMatrix);
-    const x = (tmp.x + 1) / 2 * W, y = (1 - tmp.y) / 2 * H;
+    const { x, y, ndcX, front, dist } = scr[key];
     // 조작부에 가린 아래쪽(viewH 밑)은 보이지 않는 것으로 친다
-    const visible = front && Math.abs(tmp.x) < 1.02 && y > -0.01 * H && y < viewH + 0.01 * H;
+    const visible = front && Math.abs(ndcX) < 1.02 && y > -0.01 * H && y < viewH + 0.01 * H;
     const pr = (b.radius / dist) * ppr;
     b.pixelRadius = pr;
     const clash = placed.some(p => Math.hypot(p[0] - x, p[1] - y) < 26);
-    if (!visible || clash || dist < b.radius) { b.label.style.display = 'none'; continue; }
+    const p = b.parent && scr[b.parent];
+    const huddled = p && key !== state.focus && Math.hypot(p.x - x, p.y - y) < MOON_SEP_PX;
+    if (!visible || clash || huddled || dist < b.radius) { b.label.style.display = 'none'; continue; }
     placed.push([x, y]);
     b.label.style.display = '';
     b.label.style.transform = `translate(${x}px, ${y}px)`;
@@ -365,13 +390,14 @@ function updateLabels() {
 
 // ---------- 화면 조작부 ----------
 const bodiesNav = document.getElementById('bodies');
+const moonsNav = document.getElementById('moons');
 const navButtons = {};
 for (const b of bodies) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.textContent = b.name;
   btn.addEventListener('click', () => flyTo(b.key));
-  bodiesNav.appendChild(btn);
+  (b.parent ? moonsNav : bodiesNav).appendChild(btn);
   navButtons[b.key] = btn;
 }
 const overviewBtn = document.createElement('button');
@@ -381,11 +407,16 @@ const OVERVIEW_DIR = new THREE.Vector3(0, Math.sin(OVERVIEW_TILT), Math.cos(OVER
 overviewBtn.addEventListener('click', () => flyTo('sun', { dist: overviewDist(), dir: OVERVIEW_DIR }));
 bodiesNav.appendChild(overviewBtn);
 
+// 위성 줄: 위성이 있는 행성이나 그 위성에 가 있을 때 그 계의 위성만 보인다
 function markFocus() {
+  const f = byKey[state.focus], system = f.parent ?? f.key;
+  let any = false;
   for (const b of bodies) {
     navButtons[b.key].setAttribute('aria-pressed', String(b.key === state.focus));
     b.label.classList.toggle('focus', b.key === state.focus);
+    if (b.parent) { const show = b.parent === system; navButtons[b.key].hidden = !show; any ||= show; }
   }
+  moonsNav.hidden = !any;
 }
 
 // 대기 켜기·끄기 — 표면이 대기에 가려진 천체에 다가가 있을 때만 단추를 보인다
@@ -475,7 +506,14 @@ function step(now = performance.now()) {
     if (b.trail) {
       // 행성이 화면에서 커지면 궤도선이 행성을 뚫고 지나가 보이므로 흐리게 한다
       const pr = (b.radius / b.mesh.position.distanceTo(camera.position)) * ppr;
-      b.trail.material.opacity = THREE.MathUtils.clamp(1 - (pr - 3) / 25, 0, 1);
+      let op = THREE.MathUtils.clamp(1 - (pr - 3) / 25, 0, 1);
+      if (b.parent) {
+        // 위성 궤도가 화면에서 행성 둘레의 작은 얼룩일 때는 감춘다(궤도 반지름 12→30px에서 나타남)
+        const P = byKey[b.parent];
+        const orbitPx = Math.hypot(...b.pos.map((v, i) => v - P.pos[i])) / P.mesh.position.distanceTo(camera.position) * ppr;
+        op *= THREE.MathUtils.clamp((orbitPx - 12) / 18, 0, 1) * 0.7;
+      }
+      b.trail.material.opacity = op;
       b.trail.visible = b.trail.material.opacity > 0.01;
       if (b.trail.visible) updateTrail(b, jd); // 안 보이는 궤도선은 다시 계산하지 않는다
       b.trail.position.copy(b.mesh.position);

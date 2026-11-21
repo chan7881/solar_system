@@ -36,10 +36,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); o
   background: var(--panel); border-top: 1px solid var(--line); backdrop-filter: blur(8px); }
 #bodies { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 @media (min-width: 760px) { #bodies { grid-template-columns: repeat(10, 1fr); } }
+#moons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+@media (min-width: 760px) { #moons { grid-template-columns: repeat(10, 1fr); } }
+#moons[hidden], #moons button[hidden] { display: none; }
 button { font: inherit; }
-#bodies button, #live { min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: transparent;
+#bodies button, #moons button, #live { min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: transparent;
   color: var(--fg); font-size: 14px; padding: 0 6px; cursor: pointer; }
-#bodies button[aria-pressed="true"], #live[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg);
+#bodies button[aria-pressed="true"], #moons button[aria-pressed="true"], #live[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg);
   border-color: var(--accent); font-weight: 700; }
 #time { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 #live { flex: none; padding: 0 12px; }
