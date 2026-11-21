@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BODIES } from '../src/ephemeris.js';
 import { MOONS } from '../src/moons.js';
+import { SMALL_BODIES } from '../src/smallbodies.js';
 import { navGroups, systemOf, RATES, REALTIME, clampRate, rateText, advanceMs } from '../src/nav.js';
 
 const ALL = [...BODIES, ...MOONS];
@@ -37,6 +38,14 @@ test('행성·위성이 아닌 천체는 기타로, 그 위성은 그 아래로'
   assert.equal(g.planets.length, 8);
 });
 
+test('왜행성·혜성은 각각 묶이고 목록 순서를 지킨다 — 기타에는 안 들어간다', () => {
+  const list = [...ALL, ...SMALL_BODIES, { key: 'orphan', name: '고아' }];
+  const g = navGroups(list);
+  assert.deepEqual(g.dwarfs.map(e => e.body.key), ['ceres', 'pluto', 'haumea', 'makemake', 'eris']);
+  assert.deepEqual(g.comets.map(e => e.body.key), ['halley', 'encke', 'churyumov', 'swifttuttle', 'halebopp']);
+  assert.deepEqual(g.other.map(e => e.body.key), ['orphan']);
+});
+
 test('펼칠 계: 위성이면 모천체, 위성이 있는 행성은 자기, 없으면 null', () => {
   assert.equal(systemOf(ALL, 'titan'), 'saturn');
   assert.equal(systemOf(ALL, 'saturn'), 'saturn');
@@ -66,4 +75,31 @@ test('빠르기 문구와 흐르는 시간의 방향', () => {
   assert.equal(advanceMs({ rateIdx: back, live: false, paused: false }, 0.5), -43200e3);
   assert.equal(advanceMs({ rateIdx: day, live: false, paused: true }, 0.5), 0);
   assert.equal(advanceMs({ rateIdx: REALTIME, live: true, paused: false }, 0.5), 0);
+});
+
+test('레이어: 위성은 모행성을 따르고, 꺼도 보고 있는 계는 남는다', async () => {
+  const { layerOf, bodyShown, defaultLayers, GROUP_LAYER } = await import('../src/nav.js');
+  const list = [...ALL, ...SMALL_BODIES];
+  assert.equal(layerOf(list, 'sun'), null);
+  assert.equal(layerOf(list, 'earth'), 'planets');
+  assert.equal(layerOf(list, 'titan'), 'planets');
+  assert.equal(layerOf(list, 'pluto'), 'dwarfs');
+  assert.equal(layerOf(list, 'halley'), 'comets');
+  const L = { ...defaultLayers(), planets: false, comets: false };
+  assert.equal(bodyShown(list, 'sun', L, 'sun'), true);
+  assert.equal(bodyShown(list, 'mars', L, 'sun'), false);
+  assert.equal(bodyShown(list, 'phobos', L, 'sun'), false);
+  assert.equal(bodyShown(list, 'pluto', L, 'sun'), true);   // 왜행성은 켜져 있음
+  assert.equal(bodyShown(list, 'halley', L, 'sun'), false);
+  assert.equal(bodyShown(list, 'halley', L, 'halley'), true); // 보고 있으면 남김
+  // 타이탄을 보면 토성과 다른 토성 위성은 남고, 목성·목성 위성은 숨는다
+  assert.equal(bodyShown(list, 'saturn', L, 'titan'), true);
+  assert.equal(bodyShown(list, 'mimas', L, 'titan'), true);
+  assert.equal(bodyShown(list, 'jupiter', L, 'titan'), false);
+  assert.equal(bodyShown(list, 'io', L, 'titan'), false);
+  assert.equal(bodyShown(list, 'mars', defaultLayers(), 'sun'), true);
+  assert.deepEqual(GROUP_LAYER, ['belt', 'belt', 'belt', 'kuiper']);
+  const d = defaultLayers();
+  assert.equal(d.groupColors, false); // 색 구분은 처음엔 꺼짐(흰 점)
+  assert.equal(d.constellations, false);
 });

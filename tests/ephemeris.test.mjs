@@ -76,3 +76,14 @@ test('황도→화면 변환은 회전(행렬식 +1)', () => {
   const ex = eclipticToScene([1, 0, 0]), ey = eclipticToScene([0, 1, 0]), ez = eclipticToScene([0, 0, 1]);
   assert.ok(Math.abs(dot(cross(ex, ey), ez) - 1) < 1e-15);
 });
+
+test('적경·적위 → 장면 방향: 춘분점은 +X, 천구 북극은 황도 북극(+Y)에서 황경 90°(−Z) 쪽으로 23.44°', async () => {
+  const { raDecToScene } = await import('../src/ephemeris.js');
+  const close = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
+  assert.ok(close(raDecToScene(0, 0), [1, 0, 0]));
+  const e = 84381.448 / 3600 * Math.PI / 180;
+  // 천구 북극: 황도 좌표 (0, sinε, cosε) → 장면 (x, z, −y) = (0, cosε, −sinε)
+  assert.ok(close(raDecToScene(0, 90), [0, Math.cos(e), -Math.sin(e)]));
+  // 하지점(적경 90°·적위 +ε)은 황경 90°·황위 0° → 장면 −Z
+  assert.ok(close(raDecToScene(90, e * 180 / Math.PI), [0, 0, -1]));
+});

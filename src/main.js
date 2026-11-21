@@ -1,13 +1,15 @@
 // 화면 — 크기·거리 모두 실제 비율(km). 초점 천체를 원점에 두고 그린다(위치 계산은 JS 배정밀도, 그리기 직전에 뺀다).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
-import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation } from './ephemeris.js';
+import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation, raDecToScene } from './ephemeris.js';
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
-import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf } from './nav.js';
+import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
+import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT } from './smallbodies.js';
 
 const TRAIL_N = 360;
+const ORBIT_OPACITY = 0.3; // 궤도(한 바퀴 고른 선)의 밝기 — 궤적(꼬리)보다 흐리게
 const FOV = 45;
 
 // ---------- 장면 ----------
@@ -16,14 +18,16 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicD
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
-const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 2e11);
+// 먼 면은 평소 2e11km(약 1,300AU) — 오르트 구름이 보일 만큼 물러날 때만 늘린다(로그 깊이의 가까운 쪽 정밀도를 아끼려고, updateClouds)
+const FAR_NEAR = 2e11;
+const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, FAR_NEAR);
 const controls = new OrbitControls(camera, canvas);
 controls.enablePan = false;
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.zoomSpeed = 1.2;
 controls.rotateSpeed = 0.6;
-controls.maxDistance = 400 * AU_KM;
+controls.maxDistance = 400000 * AU_KM;
 
 const sunLight = new THREE.PointLight(0xffffff, 3, 0, 0);
 scene.add(sunLight);
@@ -86,17 +90,19 @@ function loadShape(b) {
     b.mesh.geometry = geo;
   }).catch(e => console.warn(`모양 모형을 못 불러옴: ${b.key} (${e}) — 구로 둔다`));
 }
-const ALL = [...BODIES, ...MOONS];
+const ALL = [...BODIES, ...MOONS, ...SMALL_BODIES];
 const bodies = ALL.map(b => {
   const fine = TEXTURED.has(b.key) || b.key in SURFACE_UNDER;
-  const geo = b.parent ? new THREE.SphereGeometry(b.radius, ...(fine ? [96, 48] : [48, 24])) : ellipsoidGeometry(b.re, b.rp);
+  // 하우메아는 3축 타원체(자세 모형이 없어 긴 축을 황도면에 눕혀 둔다 — 돌리지 않는다)
+  const geo = b.abc ? new THREE.SphereGeometry(1, 48, 24).scale(b.abc[0], b.abc[2], b.abc[1])
+    : b.parent ? new THREE.SphereGeometry(b.radius, ...(fine ? [96, 48] : [48, 24])) : ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
   if (TEXTURED.has(b.key)) loadSurface(b.key, mat);
   const mesh = new THREE.Mesh(geo, mat);
   scene.add(mesh);
-  let trail = null;
+  let trail = null, orbitLine = null;
   if (b.key !== 'sun') {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((TRAIL_N + 1) * 3), 3));
@@ -108,9 +114,18 @@ const bodies = ALL.map(b => {
     g.setAttribute('color', new THREE.BufferAttribute(col, 4));
     trail = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }));
     trail.frustumCulled = false;
+    trail.renderOrder = 2; // 점 무리(0)보다 나중에 그려 궤도선이 점에 묻히지 않게
     scene.add(trail);
+    // 궤도: 같은 점을 한 바퀴 고른 밝기로(궤적은 천체 뒤로 흐려지는 꼬리)
+    orbitLine = new THREE.Line(g, new THREE.LineBasicMaterial({ color: c, transparent: true, depthWrite: false }));
+    orbitLine.frustumCulled = false;
+    orbitLine.renderOrder = 2;
+    scene.add(orbitLine);
   }
-  return { ...b, reach: SHAPE_REACH[b.key] ?? b.radius, mesh, trail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
+  // 위치·궤도선 함수 — 행성(Standish)과 소천체(Horizons 요소)를 여기서 한 번 고른다(위성은 moons.js)
+  const small = isSmallBody(b.key);
+  return { ...b, reach: SHAPE_REACH[b.key] ?? b.reach ?? b.radius, mesh, trail, orbitLine,
+    helio: small ? smallBodyHelio : heliocentric, orbit: small ? smallBodyTrail : orbitTrail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
 for (const k of SHAPED) loadShape(byKey[k]);
@@ -233,6 +248,8 @@ const state = {
   paused: false,
   atEdge: false, // 계산 범위 끝에 닿아 멈췄음(빠르기를 바꾸면 풀림)
   focus: 'sun',
+  view: null, // 사이드바의 「전체 보기」 중 고른 것(태양 중심 보기) — 다른 곳으로 가면 null
+  layers: defaultLayers(),
   fly: null, // { from, to, t0, dur, d0, d1, bump, dir0, dir1 }
 };
 
@@ -253,9 +270,9 @@ function updatePositions(jd) {
   for (const k of PARENTS) sys[k] = systemOffsets(k, jd);
   for (const b of bodies) {
     if (b.parent) continue; // 위성은 행성이 다 옮겨진 뒤에(아래)
-    const h = heliocentric(b.key, jd).map(v => v * AU_KM), o = sys[b.key]?.planet ?? [0, 0, 0];
+    const h = b.helio(b.key, jd).map(v => v * AU_KM), o = sys[b.key]?.planet ?? [0, 0, 0];
     b.pos = eclipticToScene([h[0] + o[0], h[1] + o[1], h[2] + o[2]]);
-    orient(b, jd);
+    if (hasRotation(b.key)) orient(b, jd); // 에리스·하우메아·마케마케·혜성은 자세 모형이 없다
   }
   for (const b of bodies) {
     if (!b.parent) continue;
@@ -269,7 +286,7 @@ function updateTrail(b, jd) {
   if (!b.trail || b.trailJd === jd) return;
   b.trailJd = jd;
   // 행성은 태양 중심(AU), 위성은 행성 중심(km) 궤도 — 위성 궤도선은 행성을 따라 움직이는 닫힌 고리로 보인다
-  const pts = b.parent ? b.moonTrail(jd) : orbitTrail(b.key, jd, TRAIL_N);
+  const pts = b.parent ? b.moonTrail(jd) : b.orbit(b.key, jd, TRAIL_N);
   const scale = b.parent ? 1 : AU_KM;
   const p0 = pts[0];
   const arr = b.trail.geometry.attributes.position.array;
@@ -290,15 +307,16 @@ const halfH = (w = stageW) => Math.atan(Math.tan(halfV()) * w / viewH);
 const pxPerRad = () => (viewH / 2) / Math.tan(halfV());
 // 천체가 좁은 쪽 화면의 약 60%를 차지하는 거리
 const viewDist = (b, w) => b.reach / Math.sin(Math.min(halfV(), halfH(w)) * 0.6);
-// 전체 보기: 해왕성 궤도(약 30AU)가 기울여 본 화면에 들어오는 거리
+// 전체 보기: 반지름 rAU의 원반(태양계 전체는 해왕성 궤도 약 30AU → 33AU)이 기울여 본 화면에 들어오는 거리
 const OVERVIEW_TILT = 55 * Math.PI / 180;
-const overviewDist = w => Math.max(33 * AU_KM / Math.tan(halfH(w)), 33 * AU_KM * Math.sin(OVERVIEW_TILT) * 1.3 / Math.tan(halfV())); // 세로는 가까운 쪽이 원근으로 커져서 여유 1.3배
+const overviewFit = rAU => w => Math.max(rAU * AU_KM / Math.tan(halfH(w)), rAU * AU_KM * Math.sin(OVERVIEW_TILT) * 1.3 / Math.tan(halfV())); // 세로는 가까운 쪽이 원근으로 커져서 여유 1.3배
+const overviewDist = overviewFit(33);
 
 // 날아가기 3단계 — ① 두 천체가 함께 보일 만큼 물러나고 ② 옆으로 옮겨 가고 ③ 다가간다.
 // 단계마다 걸리는 시간은 거리 배율(로그)에 비례한다. 이미 충분히 멀면 ①은 0초.
 function flyTo(key, opts = {}) {
   // 날아가는 중에 누르면 도착한 뒤에 이어서 간다(중간 위치에서 튀지 않게)
-  if (state.fly) { state.fly.next = key === state.fly.to ? null : key; return; }
+  if (state.fly) { state.fly.next = key === state.fly.to && !opts.view ? null : { key, opts }; return; }
   // 손으로 돌리다 남은 관성을 먼저 털어 낸다 — 남겨 두면 도착한 뒤에 화면이 저절로 돈다
   const damping = controls.enableDamping;
   controls.enableDamping = false;
@@ -306,6 +324,7 @@ function flyTo(key, opts = {}) {
   controls.enableDamping = damping;
   const from = state.focus;
   state.focus = key;
+  state.view = opts.view ?? null;
   markFocus();
   // 사이드바를 여닫는 중이면 무대 폭이 바뀌는 중이다 — 거리는 전환이 끝난 뒤의 폭으로 잰다
   const fw = finalStageW();
@@ -345,16 +364,16 @@ function focusPosition(now) {
     controls.enabled = true;
     controls.minDistance = byKey[state.focus].reach * 1.15;
     updateAtmoButton();
-    if (f.next) flyTo(f.next);
+    if (f.next) flyTo(f.next.key, f.next.opts);
   }
   return [a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m, a[2] + (b[2] - a[2]) * m];
 }
 
 // ---------- 이름표 ----------
 const labelLayer = document.getElementById('labels');
-// 겹치면 앞쪽이 이긴다 — 행성 다음에 위성(큰 것부터)
+// 겹치면 앞쪽이 이긴다 — 행성 다음에 위성·왜행성·혜성(큰 것부터 — 혜성 핵은 맨 뒤)
 const PRIORITY = ['sun', 'jupiter', 'saturn', 'earth', 'uranus', 'neptune', 'venus', 'mars', 'mercury',
-  ...MOONS.slice().sort((a, b) => b.radius - a.radius).map(m => m.key)];
+  ...[...MOONS, ...DWARFS, ...COMETS].sort((a, b) => b.radius - a.radius).map(m => m.key)];
 // 위성 이름표는 행성에서 화면으로 이만큼(px) 떨어져 보일 때만 — 멀리서 보면 행성 이름표에 겹쳐 묻힌다
 const MOON_SEP_PX = 28;
 for (const b of bodies) {
@@ -385,34 +404,43 @@ function updateLabels() {
   const placed = [];
   const order = [state.focus, ...PRIORITY.filter(k => k !== state.focus)];
   const scr = {};
-  for (const b of bodies) scr[b.key] = project(b);
+  for (const b of bodies) { scr[b.key] = project(b); scr[b.key].pr = (b.reach / scr[b.key].dist) * ppr; }
+  // 더 가까운 천체의 원판 뒤에 숨은 천체 — 이름표가 원판 위에 떠 보이지 않게
+  const discs = bodies.filter(b => b.mesh.visible && scr[b.key].front && scr[b.key].pr > 4);
+  const behind = (b, x, y, dist) => discs.some(o => o !== b && scr[o.key].dist < dist && Math.hypot(scr[o.key].x - x, scr[o.key].y - y) < scr[o.key].pr);
+  const L = state.layers;
   for (const key of order) {
     const b = byKey[key];
+    // 레이어로 숨긴 천체, 이름표·아이콘을 둘 다 끈 경우는 표시하지 않는다
+    if (!b.mesh.visible || (!L.labels && !L.icons)) { b.label.style.display = 'none'; continue; }
     const { x, y, ndcX, front, dist } = scr[key];
     // 조작부에 가린 아래쪽(viewH 밑)은 보이지 않는 것으로 친다
     const visible = front && Math.abs(ndcX) < 1.02 && y > -0.01 * H && y < viewH + 0.01 * H;
-    const pr = (b.reach / dist) * ppr;
+    const pr = scr[key].pr;
     b.pixelRadius = pr;
     // 겹침은 이름이 실제로 놓일 상자로 본다 — 큰 천체는 이름이 원판 위로 떨어져 있어 중심끼리 재면 못 잡는다
     const nameW = b.nameW || b.name.length * 15; // 숨어 있던 이름표는 너비를 잴 수 없어 어림한다
     const ringD = pr < 6 ? 14 : 0;
     const off = Math.max(ringD / 2, pr) + 6;
     const flip = ringD && x + off + nameW > W - 4; // 오른쪽 끝에서 잘리면 이름을 동그라미 왼쪽에 둔다
-    const box = !ringD ? [x - nameW / 2, y - off - 18, x + nameW / 2, y - off]
+    const box = !L.labels ? [x - 7, y - 7, x + 7, y + 7] // 아이콘만
+      : !ringD ? [x - nameW / 2, y - off - 18, x + nameW / 2, y - off]
       : flip ? [x - off - nameW, y - 9, x + 7, y + 9] : [x - 7, y - 9, x + off + nameW, y + 9];
     const clash = placed.some(q => box[0] < q[2] + 4 && q[0] < box[2] + 4 && box[1] < q[3] + 4 && q[1] < box[3] + 4);
     const p = b.parent && scr[b.parent];
     const huddled = p && p.front && key !== state.focus && Math.hypot(p.x - x, p.y - y) < MOON_SEP_PX;
-    if (!visible || clash || huddled || dist < b.reach) { b.label.style.display = 'none'; continue; }
+    if (!visible || clash || huddled || dist < b.reach || behind(b, x, y, dist)) { b.label.style.display = 'none'; continue; }
     placed.push(box);
     b.label.style.display = '';
     b.label.style.transform = `translate(${x}px, ${y}px)`;
     b.ring.style.width = b.ring.style.height = ringD + 'px';
-    b.ring.style.display = ringD ? '' : 'none';
-    b.nameW ||= b.nameEl.offsetWidth;
+    b.ring.style.display = ringD && L.icons ? '' : 'none';
+    b.nameEl.style.display = L.labels ? '' : 'none';
+    if (L.labels) b.nameW ||= b.nameEl.offsetWidth;
     b.nameEl.style.transform = !ringD ? `translate(-50%, ${-off - 18}px)`
       : flip ? `translate(calc(-100% - ${off}px), -50%)` : `translate(${off}px, -50%)`;
   }
+  return placed;
 }
 
 // ---------- 화면 조작부 ----------
@@ -476,14 +504,155 @@ function addEntry(parentEl, { body, moons }) {
   setExpanded(body.key, false);
 }
 
+// ---------- 소천체 무리(점) ----------
+// 소행성대·힐다·트로이·카이퍼대: JPL SBDB 궤도 요소(textures/small_bodies.bin) · 오르트 구름: 모형(src/smallbodies.js)
+// 크기를 바꾸지 않는 점(화소 단위). 천체에 바짝 다가가면 별처럼 보여 헷갈리므로 흐리게 감춘다
+// 점은 실제 크기가 아니라 화소 하나라 실제보다 빽빽해 보인다 → 반투명으로 두고, 궤도선(renderOrder 2)을 점 위에 그린다
+// 색 구분(레이어 「무리별 색 구분」)을 끄면 모두 흰 점. 무리를 끄면 그 점의 알파를 0으로
+const GROUP_COLORS = [0xd4d4d4, 0xe8a23c, 0x4fc95c, 0x8fb2e0]; // 소행성대 · 힐다 · 트로이 · 카이퍼대
+const GROUP_NAMES = ['소행성대', '힐다', '트로이군', '카이퍼대'];
+const OORT_COLOR = 0x7d8fb0;
+const PLAIN = 0xffffff;
+const CLOUD_ALPHA = 0.32, OORT_ALPHA = 0.5;
+const cloudMat = new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false });
+const cloud = new THREE.Points(new THREE.BufferGeometry(), cloudMat);
+cloud.frustumCulled = false;
+cloud.visible = false;
+scene.add(cloud);
+const cloudState = { P: null, jd: NaN };
+// 색·알파(무리 켜짐) — 레이어를 바꿀 때만 다시 넣는다
+function paintCloud() {
+  const P = cloudState.P;
+  if (!P) return;
+  const L = state.layers, attr = cloud.geometry.attributes.color, c = new THREE.Color();
+  for (let k = 0; k < P.count; k++) {
+    const g = P.group[k];
+    c.set(L.groupColors ? GROUP_COLORS[g] : PLAIN);
+    attr.array.set([c.r, c.g, c.b, L[GROUP_LAYER[g]] ? 1 : 0], k * 4);
+  }
+  attr.needsUpdate = true;
+  oort.material.color.set(L.groupColors ? OORT_COLOR : PLAIN);
+}
+fetch('textures/small_bodies.bin').then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
+  const P = parsePoints(buf);
+  cloud.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P.count * 3), 3));
+  cloud.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(P.count * 4), 4));
+  cloudState.P = P;
+  paintCloud();
+}).catch(e => console.warn('소천체 무리를 못 불러옴 — 점 없이 둔다', e));
+const OORT_N = 30000;
+const oort = new THREE.Points(new THREE.BufferGeometry(),
+  new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, color: PLAIN, transparent: true, depthWrite: false }));
+{
+  const p = oortCloud(OORT_N); // AU, 장면 좌표
+  for (let i = 0; i < p.length; i++) p[i] *= AU_KM;
+  oort.geometry.setAttribute('position', new THREE.BufferAttribute(p, 3));
+}
+oort.frustumCulled = false;
+scene.add(oort);
+// 위치는 태양 중심(km)으로 두고 물체째 태양 자리에 놓는다. 시각이 0.01일 넘게 바뀔 때만 다시 계산한다
+function updateClouds(jd) {
+  const sun = byKey.sun.mesh.position;
+  const P = cloudState.P;
+  if (P) {
+    // 초점 천체 크기의 50배 안이면 감추고 500배 밖이면 다 보인다(로그로 이어짐)
+    const op = THREE.MathUtils.clamp(Math.log10(camera.position.length() / (50 * byKey[state.focus].reach)), 0, 1);
+    cloudMat.opacity = op * CLOUD_ALPHA;
+    cloud.visible = op > 0.01 && (state.layers.belt || state.layers.kuiper);
+    cloud.position.copy(sun);
+    if (cloud.visible && !(Math.abs(jd - cloudState.jd) < 0.01)) { // 감춰져 있으면 계산하지 않는다
+      const attr = cloud.geometry.attributes.position;
+      pointPositions(P, jd, attr.array, AU_KM);
+      attr.needsUpdate = true;
+      cloudState.jd = jd;
+    }
+  }
+  // 오르트 구름은 태양에서 300AU 밖으로 물러나면 나타나 3,000AU에서 다 보인다
+  const so = THREE.MathUtils.clamp(Math.log10(camera.position.distanceTo(sun) / (300 * AU_KM)), 0, 1);
+  oort.material.opacity = so * OORT_ALPHA;
+  oort.visible = so > 0.01 && state.layers.oort;
+  oort.position.copy(sun);
+  const far = oort.visible ? Math.max(FAR_NEAR, camera.position.distanceTo(sun) + 1.2 * OORT.rOut * AU_KM) : FAR_NEAR;
+  if (far !== camera.far) { camera.far = far; camera.updateProjectionMatrix(); }
+}
+// ---------- 별자리(레이어, 처음엔 꺼짐) ----------
+// 선과 이름은 d3-celestial(J2000 적경·적위) — tools/make_constellations.py. 별은 그리지 않는다(별 배경을 두지 않기로 함).
+// 무한히 먼 방향이므로 카메라를 중심으로 한 구에 붙여 카메라와 함께 옮긴다. 불투명 물체 중 맨 먼저, 깊이 검사 없이 그려
+// 천체(나중에 그림)가 늘 그 위를 덮는다
+const SKY_R = 1e6;
+const skyLines = new THREE.LineSegments(new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({ color: 0x34496b, depthTest: false, depthWrite: false }));
+skyLines.renderOrder = -1;
+skyLines.frustumCulled = false;
+skyLines.visible = false;
+scene.add(skyLines);
+const skyNames = []; // { el, dir }
+fetch('textures/constellations.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(({ lines, names }) => {
+  const seg = [];
+  for (const ln of lines) for (let i = 2; i < ln.length; i += 2) {
+    seg.push(...raDecToScene(ln[i - 2], ln[i - 1]), ...raDecToScene(ln[i], ln[i + 1]));
+  }
+  skyLines.geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(seg, v => v * SKY_R), 3));
+  for (const [name, ra, dec] of names) {
+    const e = el('div', 'cname', name);
+    e.style.display = 'none';
+    labelLayer.prepend(e); // 천체 이름표가 위에 오게
+    skyNames.push({ el: e, dir: new THREE.Vector3(...raDecToScene(ra, dec)) });
+  }
+}).catch(e => console.warn('별자리를 못 불러옴', e));
+// placed: 천체 이름표 상자들 — 겹치는 별자리 이름은 숨긴다(천체 이름이 먼저)
+function updateSky(placed = []) {
+  const on = state.layers.constellations;
+  skyLines.visible = on;
+  skyLines.position.copy(camera.position);
+  for (const n of skyNames) {
+    if (!on) { n.el.style.display = 'none'; continue; }
+    tmp.copy(n.dir).transformDirection(camera.matrixWorldInverse); // 카메라 좌표의 방향
+    if (tmp.z >= 0) { n.el.style.display = 'none'; continue; }
+    tmp.applyMatrix4(camera.projectionMatrix);
+    const x = (tmp.x + 1) / 2 * stageW, y = (1 - tmp.y) / 2 * stageH;
+    const hw = n.el.textContent.length * 6.5;
+    const clash = placed.some(q => x - hw < q[2] && q[0] < x + hw && y - 9 < q[3] && q[1] < y + 9);
+    if (clash || Math.abs(tmp.x) > 1.05 || y < 0 || y > viewH) { n.el.style.display = 'none'; continue; }
+    placed.push([x - hw, y - 9, x + hw, y + 9]);
+    n.el.style.display = '';
+    n.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+  }
+}
+
+// 사이드바 「전체 보기」 — 모두 태양을 가운데 두고 태양계 전체와 같은 기울기로, 거리만 그 무리가 화면에 차게
+// 오르트 구름은 공 모양이라 기울기와 상관없이 바깥 반지름이 들어오는 거리
+const fitSphere = rAU => w => rAU * AU_KM / Math.sin(Math.min(halfV(), halfH(w)));
+const VIEWS = [
+  { key: 'all', name: '태양계 전체', dist: overviewDist },
+  { key: 'belt', name: '소행성대', layer: 'belt', dist: overviewFit(5.6) },
+  { key: 'kuiper', name: '카이퍼대', layer: 'kuiper', dist: overviewFit(55) },
+  { key: 'oort', name: '오르트 구름', layer: 'oort', dist: fitSphere(OORT.rOut * 1.05) },
+];
+const viewButtons = {};
+function chooseView(v) {
+  // 그 무리를 꺼 두었으면 켠다 — 안 켜면 빈 화면으로 날아간다
+  if (v.layer && !state.layers[v.layer]) setLayer(v.layer, true);
+  choose('sun', { dist: v.dist, dir: OVERVIEW_DIR, view: v.key });
+}
+
 {
   const g = navGroups(bodies);
-  const overview = itemButton({ name: '태양계 전체', color: 0x445066 }, () => choose('sun', { dist: overviewDist, dir: OVERVIEW_DIR }));
-  overview.querySelector('.sw').style.borderRadius = '2px';
-  sbList.appendChild(overview);
+  sbList.appendChild(el('div', 'sb-sec', '전체 보기'));
+  for (const v of VIEWS) {
+    const btn = itemButton({ name: v.name, color: 0x445066 }, () => chooseView(v));
+    btn.querySelector('.sw').style.borderRadius = '2px';
+    viewButtons[v.key] = btn;
+    sbList.appendChild(btn);
+  }
+  sbList.appendChild(el('div', 'sb-sec', '태양'));
   if (g.sun) addEntry(sbList, { body: g.sun, moons: [] });
   sbList.appendChild(el('div', 'sb-sec', '행성'));
   for (const e of g.planets) addEntry(sbList, e);
+  sbList.appendChild(el('div', 'sb-sec', '왜행성'));
+  for (const e of g.dwarfs) addEntry(sbList, e);
+  sbList.appendChild(el('div', 'sb-sec', '혜성'));
+  for (const e of g.comets) addEntry(sbList, e);
   if (g.other.length) { // 행성·위성이 아닌 천체가 생기면 「기타」로 모은다
     sbList.appendChild(el('div', 'sb-sec', '기타'));
     for (const e of g.other) addEntry(sbList, e);
@@ -493,22 +662,29 @@ function addEntry(parentEl, { body, moons }) {
 const sidebarEl = document.getElementById('sidebar');
 function setSidebar(open) {
   document.body.classList.toggle('sb-open', open);
+  if (open && NARROW.matches) document.body.classList.remove('ly-open'); // 폰에서는 한쪽만 연다
   document.getElementById('sb-open').setAttribute('aria-expanded', String(open));
 }
 // 전환이 끝난 뒤의 무대 폭 — 넓은 화면에서 열려 있으면 사이드바 폭만큼 밀린다
-const finalStageW = () => innerWidth - (document.body.classList.contains('sb-open') && !NARROW.matches ? sidebarEl.offsetWidth : 0);
+const finalStageW = () => {
+  const wide = !NARROW.matches, cl = document.body.classList;
+  return innerWidth - (wide && cl.contains('sb-open') && !cl.contains('ui-off') ? sidebarEl.offsetWidth : 0)
+    - (wide && cl.contains('ly-open') ? document.getElementById('layers').offsetWidth : 0);
+};
 document.getElementById('sb-close').addEventListener('click', () => setSidebar(false));
 document.getElementById('sb-open').addEventListener('click', () => setSidebar(true));
 // 폰에서 열린 목록 바깥은 덮개가 받는다 — 누르면 닫기만 하고 아래의 이름표·단추는 눌리지 않는다
-document.getElementById('scrim').addEventListener('click', () => setSidebar(false));
+document.getElementById('scrim').addEventListener('click', () => { setSidebar(false); setLayerPanel(false); });
 // 처음 상태는 index.html 첫머리 스크립트가 정한다(그리기 전에). 폭이 760px를 넘나들면 그 폭의 기본 상태로
 NARROW.addEventListener('change', () => setSidebar(!NARROW.matches));
 setSidebar(document.body.classList.contains('sb-open'));
 
 // 보는 천체 표시 — 그 천체가 속한 계를 펼친다(다른 계는 사용자가 연 그대로 둔다)
 function markFocus() {
+  // 「전체 보기」로 왔으면 태양 대신 그 보기 단추에 표시한다
+  for (const [k, btn] of Object.entries(viewButtons)) btn.setAttribute('aria-current', String(k === state.view));
   for (const b of bodies) {
-    navButtons[b.key]?.setAttribute('aria-current', String(b.key === state.focus));
+    navButtons[b.key]?.setAttribute('aria-current', String(b.key === state.focus && !state.view));
     b.label.classList.toggle('focus', b.key === state.focus);
   }
   const sys = systemOf(bodies, state.focus);
@@ -517,10 +693,11 @@ function markFocus() {
 
 // 대기 켜기·끄기 — 표면이 대기에 가려진 천체에 다가가 있을 때만 단추를 보인다
 const atmoBtn = document.getElementById('atmo');
+const atmoStateEl = document.getElementById('atmo-state');
 const surfaceTex = {}; // key → Promise<Texture>
 function applyAtmosphere() {
-  atmoBtn.textContent = state.atmosphere ? '대기 끄기' : '대기 켜기';
-  atmoBtn.setAttribute('aria-pressed', String(!state.atmosphere));
+  atmoBtn.setAttribute('aria-checked', String(state.atmosphere));
+  atmoStateEl.textContent = state.atmosphere ? '켬' : '끔';
   for (const [key, url] of Object.entries(SURFACE_UNDER)) {
     const b = byKey[key];
     if (state.atmosphere) { setMap(b.mesh.material, null, b.color); continue; }
@@ -542,6 +719,59 @@ atmoBtn.addEventListener('click', () => { state.atmosphere = !state.atmosphere; 
 function updateAtmoButton() {
   atmoBtn.hidden = !!state.fly || (state.atmosphere && !(state.focus in SURFACE_UNDER));
 }
+
+// ---------- 레이어 창(오른쪽) ----------
+const lyList = document.getElementById('ly-list');
+const layerButtons = {};
+const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const LAYER_NAME = Object.fromEntries(LAYERS.map(l => [l.key, l.name]));
+function layerItem(key, sw = false) {
+  const b = el('button', 'ly-item');
+  b.type = 'button';
+  b.setAttribute('role', sw ? 'switch' : 'checkbox');
+  b.innerHTML = sw ? `<span>${LAYER_NAME[key]}</span><span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span><span class="sw-state"></span>`
+    : `<span class="ly-box">${CHECK}</span><span>${LAYER_NAME[key]}</span>`;
+  b.addEventListener('click', () => setLayer(key, !state.layers[key]));
+  layerButtons[key] = b;
+  return b;
+}
+const legend = el('div', 'legend');
+legend.innerHTML = [...GROUP_NAMES.map((n, i) => [n, GROUP_COLORS[i]]), ['오르트 구름', OORT_COLOR]]
+  .map(([n, c]) => `<span><i style="background:${css(c)}"></i>${n}</span>`).join('');
+{
+  const sec = t => lyList.appendChild(el('div', 'sb-sec', t));
+  lyList.appendChild(layerItem('ui'));
+  sec('천체');
+  for (const k of ['planets', 'dwarfs', 'comets']) lyList.appendChild(layerItem(k));
+  sec('소천체 무리');
+  for (const k of ['belt', 'kuiper', 'oort']) lyList.appendChild(layerItem(k));
+  lyList.append(layerItem('groupColors', true), legend); // 무리 전체(소행성대~오르트 구름)에 걸리는 색 구분
+  sec('표시');
+  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations']) lyList.appendChild(layerItem(k));
+}
+function setLayers(patch) {
+  Object.assign(state.layers, patch);
+  const L = state.layers;
+  for (const [k, b] of Object.entries(layerButtons)) {
+    b.setAttribute('aria-checked', String(L[k]));
+    const st = b.querySelector('.sw-state');
+    if (st) st.textContent = L[k] ? '켬' : '끔';
+  }
+  legend.hidden = !L.groupColors;
+  document.body.classList.toggle('ui-off', !L.ui);
+  paintCloud();
+}
+const setLayer = (key, on) => setLayers({ [key]: on });
+setLayers({});
+
+const lyOpenBtn = document.getElementById('ly-open');
+function setLayerPanel(open) {
+  document.body.classList.toggle('ly-open', open);
+  lyOpenBtn.setAttribute('aria-expanded', String(open));
+  if (open && NARROW.matches) setSidebar(false); // 폰에서는 한쪽만 연다
+}
+lyOpenBtn.addEventListener('click', () => setLayerPanel(!document.body.classList.contains('ly-open')));
+document.getElementById('ly-close').addEventListener('click', () => setLayerPanel(false));
 
 const liveBtn = document.getElementById('live');
 const pauseBtn = document.getElementById('pause');
@@ -611,10 +841,13 @@ function step(now = performance.now()) {
   updatePositions(jd);
   const fp = focusPosition(now);
   const ppr = pxPerRad();
+  const L = state.layers;
   for (const b of bodies) {
     const rel = [b.pos[0] - fp[0], b.pos[1] - fp[1], b.pos[2] - fp[2]];
     b.mesh.position.set(rel[0], rel[1], rel[2]);
     if (b.key === 'sun') sunLight.position.copy(b.mesh.position);
+    // 날아가는 동안에는 출발한 천체도 남긴다(레이어를 끈 천체에서 떠날 때 갑자기 사라지지 않게)
+    b.mesh.visible = bodyShown(bodies, b.key, L, state.focus) || b.key === state.fly?.from;
     if (b.trail) {
       // 행성이 화면에서 커지면 궤도선이 행성을 뚫고 지나가 보이므로 흐리게 한다
       const pr = (b.reach / b.mesh.position.distanceTo(camera.position)) * ppr;
@@ -626,16 +859,20 @@ function step(now = performance.now()) {
         op *= THREE.MathUtils.clamp((orbitPx - 12) / 18, 0, 1) * 0.7;
       }
       b.trail.material.opacity = op;
-      b.trail.visible = b.trail.material.opacity > 0.01;
-      if (b.trail.visible) updateTrail(b, jd); // 안 보이는 궤도선은 다시 계산하지 않는다
+      b.orbitLine.material.opacity = op * ORBIT_OPACITY;
+      b.trail.visible = b.mesh.visible && L.trails && op > 0.01;
+      b.orbitLine.visible = b.mesh.visible && L.orbits && op > 0.01;
+      if (b.trail.visible || b.orbitLine.visible) updateTrail(b, jd); // 안 보이는 궤도선은 다시 계산하지 않는다
       b.trail.position.copy(b.mesh.position);
+      b.orbitLine.position.copy(b.mesh.position);
     }
   }
   if (!state.fly) controls.update();
   else camera.lookAt(0, 0, 0);
   camera.updateMatrixWorld();
+  updateClouds(jd);
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
-  updateLabels();
+  updateSky(updateLabels());
   updateClock();
 }
 
@@ -646,6 +883,7 @@ const panelEl = document.getElementById('panel');
 function resize() {
   stageW = Math.max(1, stageEl.clientWidth); stageH = Math.max(1, stageEl.clientHeight);
   viewH = Math.max(100, stageH - panelEl.offsetHeight);
+  stageEl.style.setProperty('--panel-h', panelEl.offsetHeight + 'px');
   renderer.setSize(stageW, stageH, false);
   camera.aspect = stageW / viewH;
   camera.setViewOffset(stageW, viewH, 0, 0, stageW, stageH);
@@ -656,7 +894,7 @@ function resize() {
 function refit() {
   resize();
   if (!booted) return;
-  updateLabels();
+  updateSky(updateLabels());
   draw();
 }
 let booted = false;
@@ -670,6 +908,7 @@ document.fonts?.ready.then(() => { for (const b of bodies) b.nameW = 0; });
 // 처음 화면: 태양계 전체
 camera.position.copy(OVERVIEW_DIR).multiplyScalar(overviewDist());
 controls.minDistance = byKey.sun.reach * 1.15;
+state.view = 'all';
 updatePositions(julianDateTT(state.simMs));
 markFocus();
 applyAtmosphere();
@@ -678,4 +917,4 @@ booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar };
+window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose };

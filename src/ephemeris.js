@@ -136,6 +136,8 @@ const ROTATION = {
   titan:   { ra: [39.4827, 0],                dec: [83.4279, 0],                w: [186.5855, 22.5769768] }, // 주기 항 없음(pck00011도 0)
   phobos:  { ra: [317.67071657, -0.10844326], dec: [52.88627266, -0.06134706],  w: [35.18774440, 1128.84475928, 9.536137031212154e-9] }, // w2 = pck BODY401_PM 셋째 값(12.72192797°/세기²) · 주기 항 M1~M5
   deimos:  { ra: [316.65705808, -0.10518014], dec: [53.50992033, -0.05979094],  w: [79.39932954, 285.16188899] },  // + 주기 항 M6~M10
+  ceres:   { ra: [291.418, 0],                dec: [66.764, 0],                 w: [170.650, 952.1532] },
+  pluto:   { ra: [132.993, 0],                dec: [-6.163, 0],                 w: [302.695, 56.3625225] },
 };
 // 화성계 주기 항 각 M1~M10(°): a + b·T + c·T² — pck00011 BODY4_NUT_PREC_ANGLES 앞 10개(M5의 T² 항은 포보스의 공전 가속)
 const MARS_M = [[190.72646643, 15917.10818695, 0], [21.46892470, 31834.27934054, 0], [332.86082793, 19139.89694742, 0],
@@ -193,6 +195,12 @@ const equToEcl = ([x, y, z]) => {
   const c = Math.cos(OBLIQUITY), s = Math.sin(OBLIQUITY);
   return [x, c * y + s * z, -s * y + c * z];
 };
+
+// 적경·적위(J2000, 도) → 장면 방향(단위 벡터) — 별자리 선처럼 무한히 먼 방향
+export function raDecToScene(raDeg, decDeg) {
+  const a = raDeg * DEG, d = decDeg * DEG;
+  return eclipticToScene(equToEcl([Math.cos(d) * Math.cos(a), Math.cos(d) * Math.sin(a), Math.sin(d)]));
+}
 
 // 천체 고정 좌표축(J2000 황도 좌표의 단위 벡터)
 //   pole: 북극(IAU 북극 — 불변면 북쪽. 천왕성·금성은 자전이 거꾸로라 W가 줄어든다)

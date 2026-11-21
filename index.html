@@ -23,6 +23,16 @@ if (matchMedia('(min-width: 760px)').matches) document.body.classList.add('sb-op
   <div id="sb-list"></div>
 </aside>
 <div id="scrim" aria-hidden="true"></div>
+<aside id="layers" aria-label="레이어 설정">
+  <div class="sb-head">
+    <span class="sb-title">레이어</span>
+    <button id="ly-close" type="button">
+      <span>닫기</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6M4 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <div id="ly-list"></div>
+</aside>
 
 <main id="stage">
   <canvas id="view"></canvas>
@@ -39,7 +49,12 @@ if (matchMedia('(min-width: 760px)').matches) document.body.classList.add('sb-op
       <input id="when" type="datetime-local" aria-label="날짜와 시각 고르기">
     </label>
   </header>
-  <button id="atmo" type="button" hidden>대기 끄기</button>
+  <button id="atmo" type="button" role="switch" aria-checked="true" hidden>
+    <span>대기</span><span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span><span id="atmo-state">켬</span>
+  </button>
+  <button id="ly-open" type="button" aria-label="레이어 설정 열기" aria-controls="layers" title="레이어 설정">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+  </button>
 
   <nav id="panel" aria-label="시간 조작">
     <div class="t-row">
