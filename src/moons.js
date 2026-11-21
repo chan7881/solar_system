@@ -136,8 +136,6 @@ function solveKepler(M, e) {
   return E;
 }
 
-export const MOON_BY_KEY = Object.fromEntries(MOONS.map(m => [m.key, m]));
-
 // 질량중심(궤도 요소가 주는 점) → 행성 중심 보정(km). 위성들의 질량 가중 위치를 반대로 옮긴다.
 // 반환: { planet: [dx,dy,dz], moons: { key: 행성 중심 위치 } }
 export function systemOffsets(parent, jd) {
@@ -162,4 +160,25 @@ export function moonTrail(key, jd, n) {
   const P = moonPeriod(key), pts = [];
   for (let k = 0; k <= n; k++) pts.push(moonPosition(key, jd - (P * k) / n));
   return pts;
+}
+
+// 같은 점들을 매 그림 틀마다 새로 셈하지 않는 판 — 0번만 지금 위치, 나머지는 주기/(n−1) 간격의 고정 격자 시각.
+// 시간이 흐르면 격자에서 새로 들어온 점만 셈한다(1초에 하루로 돌려도 미마스 몇 점). 격자 n점이 한 주기를 덮어 고리가 닫힌다.
+export function moonTrailCache(key, n) {
+  const h = moonPeriod(key) / (n - 1);
+  let i0 = NaN, grid = [];
+  return jd => {
+    const i = Math.floor(jd / h), shift = i - i0;
+    if (!(Math.abs(shift) < n)) {
+      grid = Array.from({ length: n }, (_, j) => moonPosition(key, (i - j) * h));
+    } else if (shift > 0) {
+      const add = Array.from({ length: shift }, (_, j) => moonPosition(key, (i - j) * h));
+      grid = add.concat(grid.slice(0, n - shift));
+    } else if (shift < 0) {
+      const add = Array.from({ length: -shift }, (_, j) => moonPosition(key, (i - (n + shift) - j) * h));
+      grid = grid.slice(-shift).concat(add);
+    }
+    i0 = i;
+    return [moonPosition(key, jd), ...grid];
+  };
 }

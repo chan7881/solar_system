@@ -55,10 +55,9 @@ def main():
         rows = []
         for y in range(1800, 2051, CHUNK_Y):
             y1 = min(y + CHUNK_Y, 2051)
-            # check: 시작을 간격의 절반만큼 민다
-            start = f'{y}-01-01' + (f' {int(step_min / 2) // 60:02d}:{int(step_min / 2) % 60:02d}' if check else '')
+            start = f'{y}-01-01'
             if check:
-                # 하루를 넘는 반 간격은 날짜를 더한다
+                # check: 시작을 간격의 절반만큼 민다(하루를 넘는 반 간격은 날짜를 더한다)
                 half_d = STEP_D / 2
                 start = f'{y}-01-{1 + int(half_d):02d} {int((half_d % 1) * 24):02d}:{int(((half_d % 1) * 24 % 1) * 60):02d}'
             if y == 1800:  # 트리톤 등은 Horizons 자료가 1800-01-02부터 — 첫 구간은 이틀 늦게

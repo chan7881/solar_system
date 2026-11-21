@@ -76,12 +76,14 @@ def unwrap_L(t, L, n_guess):
 
 
 def best_freq(t, y, fmax, complex_=False, exclude=()):
-    # 표본이 거의 고른 간격이라 격자에 올려 FFT(8배 덧대기)로 봉우리를 찾는다 — 마지막에 최소제곱으로 다듬는다
+    # 받은 자료는 20년 구간마다 시작이 1월 1일로 돌아가 위상이 끊긴다 — 고른 격자로 보간해 FFT(8배 덧대기)로 봉우리를 찾는다.
+    # 마지막에 최소제곱으로 다듬는다
     dt = np.median(np.diff(t))
-    idx = np.round((t - t[0]) / dt).astype(int)
-    n = 8 * (idx[-1] + 1)
+    m = int((t[-1] - t[0]) // dt) + 1
+    tg = t[0] + dt * np.arange(m)
+    n = 8 * m
     g = np.zeros(n, complex)
-    g[idx] = y
+    g[:m] = np.interp(tg, t, np.real(y)) + 1j * np.interp(tg, t, np.imag(y))
     P = np.abs(np.fft.fft(g)) ** 2
     f = np.fft.fftfreq(n, dt) * 2 * np.pi  # numpy FFT는 exp(-i…) — exp(+i f t) 신호가 +f에 선다
     lo = 2 * np.pi / (t[-1] - t[0])

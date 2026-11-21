@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius } from './ephemeris.js';
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
-import { MOONS, systemOffsets, moonTrail } from './moons.js';
+import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 
 const MIN = 60, HOUR = 3600, DAY = 86400;
 // 시간 빠르기(실제 1초에 흐르는 초) — 슬라이더 칸
@@ -75,7 +75,7 @@ function ellipsoidGeometry(re, rp) {
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg' };
 
 // 위성은 구(평균 반지름)로 그린다 — 자세 모형이 없어 돌리지 않는다(단색이라 보이지 않음)
-const ALL = [...BODIES, ...MOONS.map(m => ({ ...m, re: m.radius, rp: m.radius }))];
+const ALL = [...BODIES, ...MOONS];
 const bodies = ALL.map(b => {
   const geo = b.parent ? new THREE.SphereGeometry(b.radius, 48, 24) : ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
@@ -98,7 +98,7 @@ const bodies = ALL.map(b => {
     trail.frustumCulled = false;
     scene.add(trail);
   }
-  return { ...b, mesh, trail, pos: [0, 0, 0], trailJd: NaN };
+  return { ...b, mesh, trail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
 
@@ -229,11 +229,7 @@ function updatePositions(jd) {
   const sys = {};
   for (const k of PARENTS) sys[k] = systemOffsets(k, jd);
   for (const b of bodies) {
-    if (b.parent) {
-      const c = byKey[b.parent].pos, r = eclipticToScene(sys[b.parent].moons[b.key]);
-      b.pos = [c[0] + r[0], c[1] + r[1], c[2] + r[2]];
-      continue;
-    }
+    if (b.parent) continue; // 위성은 행성이 다 옮겨진 뒤에(아래)
     const h = heliocentric(b.key, jd).map(v => v * AU_KM), o = sys[b.key]?.planet ?? [0, 0, 0];
     b.pos = eclipticToScene([h[0] + o[0], h[1] + o[1], h[2] + o[2]]);
     // 자세: 구의 +Y = 북극, +X = 경도 0°, −Z = 동경 90° (SphereGeometry의 u=0.5가 +X, u가 커질수록 동쪽)
@@ -243,13 +239,18 @@ function updatePositions(jd) {
     vz.fromArray(eclipticToScene(east)).negate();
     b.mesh.quaternion.setFromRotationMatrix(basis.makeBasis(vx, vy, vz));
   }
+  for (const b of bodies) {
+    if (!b.parent) continue;
+    const c = byKey[b.parent].pos, r = eclipticToScene(sys[b.parent].moons[b.key]);
+    b.pos = [c[0] + r[0], c[1] + r[1], c[2] + r[2]];
+  }
 }
 
 function updateTrail(b, jd) {
   if (!b.trail || b.trailJd === jd) return;
   b.trailJd = jd;
   // 행성은 태양 중심(AU), 위성은 행성 중심(km) 궤도 — 위성 궤도선은 행성을 따라 움직이는 닫힌 고리로 보인다
-  const pts = b.parent ? moonTrail(b.key, jd, TRAIL_N) : orbitTrail(b.key, jd, TRAIL_N);
+  const pts = b.parent ? b.moonTrail(jd) : orbitTrail(b.key, jd, TRAIL_N);
   const scale = b.parent ? 1 : AU_KM;
   const p0 = pts[0];
   const arr = b.trail.geometry.attributes.position.array;
@@ -285,8 +286,12 @@ function flyTo(key, opts = {}) {
   controls.update();
   controls.enableDamping = damping;
   const from = state.focus;
+  // 위성 줄이 나타나거나 사라지면 조작부 높이가 바뀐다 — 거리를 재기 전에 바꾸고 화면 크기를 다시 잡는다
+  state.focus = key;
+  markFocus();
+  if (Math.max(100, innerHeight - panelEl.offsetHeight) !== viewH) resize();
   const d0 = camera.position.length();
-  const d1 = opts.dist ?? viewDist(byKey[key]);
+  const d1 = opts.dist?.() ?? viewDist(byKey[key]);
   const gap = Math.hypot(...byKey[key].pos.map((v, i) => v - byKey[from].pos[i]));
   const D = Math.max(d0, d1, (gap / Math.tan(Math.min(halfV(), halfH()))) * 1.3);
   const w = [Math.log(D / d0), gap > 0 ? 2 : 0, Math.log(D / d1)];
@@ -295,9 +300,7 @@ function flyTo(key, opts = {}) {
   const dir0 = camera.position.clone().normalize();
   const dir1 = opts.dir ? opts.dir.clone().normalize() : dir0.clone();
   state.fly = { from, to: key, t0: performance.now(), dur, d0, d1, D, cut: [w[0] / total, (w[0] + w[1]) / total], dir0, dir1 };
-  state.focus = key;
   controls.enabled = false;
-  markFocus();
   updateAtmoButton();
 }
 
@@ -370,19 +373,23 @@ function updateLabels() {
     const visible = front && Math.abs(ndcX) < 1.02 && y > -0.01 * H && y < viewH + 0.01 * H;
     const pr = (b.radius / dist) * ppr;
     b.pixelRadius = pr;
-    const clash = placed.some(p => Math.hypot(p[0] - x, p[1] - y) < 26);
+    // 겹침은 이름이 실제로 놓일 상자로 본다 — 큰 천체는 이름이 원판 위로 떨어져 있어 중심끼리 재면 못 잡는다
+    const nameW = b.nameW || b.name.length * 15; // 숨어 있던 이름표는 너비를 잴 수 없어 어림한다
+    const ringD = pr < 6 ? 14 : 0;
+    const off = Math.max(ringD / 2, pr) + 6;
+    const flip = ringD && x + off + nameW > W - 4; // 오른쪽 끝에서 잘리면 이름을 동그라미 왼쪽에 둔다
+    const box = !ringD ? [x - nameW / 2, y - off - 18, x + nameW / 2, y - off]
+      : flip ? [x - off - nameW, y - 9, x + 7, y + 9] : [x - 7, y - 9, x + off + nameW, y + 9];
+    const clash = placed.some(q => box[0] < q[2] + 4 && q[0] < box[2] + 4 && box[1] < q[3] + 4 && q[1] < box[3] + 4);
     const p = b.parent && scr[b.parent];
-    const huddled = p && key !== state.focus && Math.hypot(p.x - x, p.y - y) < MOON_SEP_PX;
+    const huddled = p && p.front && key !== state.focus && Math.hypot(p.x - x, p.y - y) < MOON_SEP_PX;
     if (!visible || clash || huddled || dist < b.radius) { b.label.style.display = 'none'; continue; }
-    placed.push([x, y]);
+    placed.push(box);
     b.label.style.display = '';
     b.label.style.transform = `translate(${x}px, ${y}px)`;
-    const ringD = pr < 6 ? 14 : 0;
     b.ring.style.width = b.ring.style.height = ringD + 'px';
     b.ring.style.display = ringD ? '' : 'none';
-    const off = Math.max(ringD / 2, pr) + 6;
-    // 오른쪽 끝에서 잘리면 이름을 동그라미 왼쪽에 둔다
-    const flip = ringD && x + off + (b.nameW ||= b.nameEl.offsetWidth) > W - 4;
+    b.nameW ||= b.nameEl.offsetWidth;
     b.nameEl.style.transform = !ringD ? `translate(-50%, ${-off - 18}px)`
       : flip ? `translate(calc(-100% - ${off}px), -50%)` : `translate(${off}px, -50%)`;
   }
@@ -404,7 +411,7 @@ const overviewBtn = document.createElement('button');
 overviewBtn.type = 'button';
 overviewBtn.textContent = '전체';
 const OVERVIEW_DIR = new THREE.Vector3(0, Math.sin(OVERVIEW_TILT), Math.cos(OVERVIEW_TILT));
-overviewBtn.addEventListener('click', () => flyTo('sun', { dist: overviewDist(), dir: OVERVIEW_DIR }));
+overviewBtn.addEventListener('click', () => flyTo('sun', { dist: overviewDist, dir: OVERVIEW_DIR }));
 bodiesNav.appendChild(overviewBtn);
 
 // 위성 줄: 위성이 있는 행성이나 그 위성에 가 있을 때 그 계의 위성만 보인다

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { MOONS, moonPosition, moonTrail, systemOffsets } from '../src/moons.js';
+import { MOONS, moonPosition, moonTrail, moonTrailCache, moonPeriod, systemOffsets } from '../src/moons.js';
 import { bodyAxes } from '../src/ephemeris.js';
 
 const ID = { 301: 'moon', 401: 'phobos', 402: 'deimos', 501: 'io', 502: 'europa', 503: 'ganymede', 504: 'callisto',
@@ -65,5 +65,25 @@ test('궤도선 0번 점이 지금 위치, 한 바퀴 뒤 점은 제자리 가�
     const pts = moonTrail(m.key, 2461365.5, 360);
     assert.deepEqual(pts[0], moonPosition(m.key, 2461365.5));
     assert.ok(norm(pts[360].map((v, i) => v - pts[0][i])) < 0.1 * norm(pts[0]), m.key);
+  }
+});
+
+test('궤도선 캐시: 앞·뒤로 조금·많이 옮겨도 매번 새로 셈한 격자와 같고, 한 바퀴를 덮는다', () => {
+  const n = 360;
+  for (const key of ['mimas', 'moon', 'triton']) {
+    const P = moonPeriod(key), h = P / (n - 1), trail = moonTrailCache(key, n);
+    // 처음 · 조금 앞 · 많이 앞 · 조금 뒤 · 많이 뒤 · 격자 안에서만 · 한 바퀴 넘게 뛰기
+    const steps = [0, 0.3 * h, 5.2 * h, 200.7 * h, -3.1 * h, -150.4 * h, 0.1 * h, 2 * P, -0.5 * h];
+    let jd = 2461365.5;
+    for (const s of steps) {
+      jd += s;
+      const pts = trail(jd), i = Math.floor(jd / h);
+      assert.equal(pts.length, n + 1);
+      assert.deepEqual(pts[0], moonPosition(key, jd), `${key} 0번`);
+      for (let j = 0; j < n; j++) assert.deepEqual(pts[j + 1], moonPosition(key, (i - j) * h), `${key} ${s / h}칸 뒤 ${j}번`);
+      // 마지막 점은 한 주기 이상 거슬러 간 시각(고리가 닫힌다), 한 칸 넘게 지나치지 않는다
+      const tLast = (i - n + 1) * h;
+      assert.ok(jd - tLast >= P - 1e-9 && jd - tLast < P + h, `${key} 덮는 길이`);
+    }
   }
 });
