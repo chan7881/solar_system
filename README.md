@@ -19,12 +19,12 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 달 표면·자세(2026-11-21) — NASA CGI Moon Kit 색 지도, IAU 2015 자전 모형에 주기 항 E1~E13(칭동). 지구에서 본 원판 가운데·태양 직하점이 Horizons와 최대 0.011°(`tests/moon_rot.test.mjs`, 주기 항을 다 빼면 10개 모두, 0.07° 항 하나만 빼도 10개 실패 · 0.025° 이하 항은 못 가림), 화면 속 달 구에서 잰 지구 쪽 점도 동경 352.934°·남위 4.627° 대 Horizons 352.933°·4.629°.
 타이탄 대기 끄기(2026-11-21) — 다가가면 「대기 끄기」, 끄면 Cassini ISS 근적외선 지도(`tools/make_titan.py`). 자세는 IAU 2015(주기 항 없음). Horizons 위치로 잰 태양 직하점이 0.0033° 안(측지 위도는 중심 위도로 바꿔 댐), 앱 위치로 재면 토성 Standish 오차 때문에 최대 0.16°(`tests/titan_rot.test.mjs`, W·자전 속도·극을 0.05°쯤 틀면 4~5개 실패). 화면 속 타이탄 구의 태양 쪽 점이 모형과 0.001° 안.
 사이드바·시간 조작부(2026-11-21) — 왼쪽 사이드바에 태양계 전체·태양·행성(누르면 위성 아코디언)·기타(행성·위성 아닌 천체가 생기면). 넓은 화면(760px 이상)은 무대를 밀어내고, 폰은 위에 덮는다(고르거나 바깥을 누르면 닫힘). 시간은 Eyes처럼 가운데 = 실제 빠르기(초록 눈금), 왼쪽 과거로·오른쪽 미래로, 멈춤·한 칸씩 단추·실시간. 날짜는 왼쪽 위 날짜를 눌러 고른다. 범위(1800~2050) 끝에 닿으면 「멈춤 · 1800~2050년 끝」.
+포보스·데이모스 모양·자세(2026-11-21) — 모양은 Mars Express DSK(포보스 DLR HRSC · 데이모스 Thomas Viking)를 `tools/make_shapes.py`로 방향 10242개에 다시 뽑아 `textures/*_shape.bin`(부피 차 −0.07%, 화면에서 스티크니 확인). 자세는 IAU 2015 + 화성계 주기 항 M1~M10(포보스 W의 d² 항 포함). Horizons 위치로 잰 태양 직하점이 0.00002° 안(`tests/marsmoons_rot.test.mjs`, M5 항을 0.01°만 틀어도 5개 실패), 앱 위치로 재면 0.22°(위치 맞춤 오차).
 저장소 `chan7881/solar_system`(공개).
 
 ## 남은 일
 
-1. 위성 다음 단계 후보: 포보스·데이모스는 지금 구(실제는 감자 모양)
-2. 소천체 · 도구(크기 비교·거리 재기)
+1. 소천체 · 도구(크기 비교·거리 재기)
 - 지도 위도는 행성 중심 위도 — 몸체는 꼭짓점 방향을 그대로 두고 타원체 거리로 옮겨 만든다(`ellipsoidGeometry`). 지도를 새로 넣을 때 측지 위도면 바꿔 넣는다.
 - 고리 셰이더(`src/main.js`)는 `src/rings.js` 식을 손으로 옮긴 것이라 테스트가 셰이더 쪽은 못 잡는다 — 식을 고치면 둘 다
 
@@ -38,9 +38,10 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `src/nav.js` | 사이드바 분류(태양·행성+위성·기타)와 시간 빠르기 칸·문구 — 순수 함수(`tests/nav.test.mjs`) |
 | `src/moons.js` · `src/moon_fits.js` | 위성 목록·위치(달은 ELP 주요 항, 나머지는 맞춘 식)·질량중심 보정. `moon_fits.js`는 `tools/fit_moons.py`가 만든다(손으로 고치지 않음) |
 | `tools/fetch_moons.py` · `tools/fit_moons.py` | Horizons 위성 자료 받기(`원본/moons/`, git 밖 · 서버가 자주 끊겨 `rev`로 두 벌 병렬) → 평균 궤도 식 맞추기(따로 둔 반 칸 밀린 자료로 오차 보고) |
+| `src/shapes.js` · `tools/make_shapes.py` | 포보스·데이모스 모양 파일(`textures/<이름>_shape.bin`) 읽기 — 천체 고정 (x,y,z) → 몸체 (x,z,−y). 카메라 근접 한계·이름표 가림은 평균 반지름이 아니라 `SHAPE_REACH`(가장 먼 점, 모양을 다시 뽑으면 맞출 것). 원본 OBJ는 `원본/phobos`·`원본/deimos`(git 밖) |
 | `src/rings.js` · `tools/make_rings.py` | 고리 단면(`textures/saturn_rings.json`)·밝기·비침·그림자·밉맵의 순수 함수. 원본 엄폐 자료는 `원본/rings/`(git 밖) |
 | `textures/` · `tools/make_textures.py` · `tools/make_saturn.py` · `tools/make_venus.py` · `tools/make_titan.py` | 표면 지도 2K JPG와 출처(`textures/출처.md`). 원본(수백 MB)은 git 밖 — 주소는 출처.md, 줄이기는 스크립트 |
-| `tests/` | `npm test` — 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 타이탄 자세는 Horizons 원판 가운데·태양 직하점(`horizons_titan_rot.txt`)과 Horizons 위치(`horizons_titan_vec.txt`) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
+| `tests/` | `npm test` — 포보스·데이모스 자세는 Horizons 직하점(`horizons_marsmoons_rot.txt`·`_vec.txt`), 모양은 부피·축·스티크니 자리(`shapes.test.mjs`) · 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 타이탄 자세는 Horizons 원판 가운데·태양 직하점(`horizons_titan_rot.txt`)과 Horizons 위치(`horizons_titan_vec.txt`) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
 
 - 실행: 폴더에서 `python -m http.server 8731 --bind 127.0.0.1` → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)
 - 단위는 km, **초점 천체가 원점**. 위치는 JS 배정밀도로 계산해 그리기 직전에 초점 위치를 뺀다. 궤도선은 행성 기준 상대 좌표.
@@ -64,4 +65,5 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 - 고리 τ 질감을 GPU 자동 밉맵에 맡기면 안 된다 — τ를 그대로 평균해 간극이 메워지고, R16F는 모바일에서 자동 생성이 실패해 고리가 조용히 사라질 수 있다. 투과율로 평균한 단계를 CPU에서 넣는다.
 - **JPL 위성 평균 궤도 요소표(sats/elem)는 쓰지 마라** — 주기 자릿수가 모자라고 공명 흔들림(미마스 ±43°, 70.7년)이 없어 수십 년이면 수십° 틀린다. 궤도면이 도는 주기가 자료 기간(250년)보다 긴 위성(트리톤·타이탄·이아페투스·칼리스토)은 FFT로 안 잡혀 `fit_complex`에서 낮은 주파수를 직접 훑는다.
 - Horizons 트리톤 자료는 1800-01-02부터다(`fetch_moons.py` 첫 구간을 이틀 늦춤).
+- **Horizons의 3축 타원체 천체(포보스·데이모스) 위도**는 「중심 방향 광선이 3축 타원체와 만나는 점의, 회전 타원체(a,a,c) 기준 측지 위도(고도 포함)」다 — 경도는 중심 경도 그대로. 납작해서 반복 계산이 천천히 모인다(30번이면 0.0008° 남음). 화성 중심에서 본 값에는 화성 공전 속도의 광행차(약 0.005°)가 들어 있다.
 - 해왕성은 Standish 오차가 공표값(10″)보다 크게 나온다(실측 최대 45″). 테스트 허용치는 실측의 약 2배.

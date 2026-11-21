@@ -5,6 +5,7 @@ import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDa
 import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf } from './nav.js';
+import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
 
 const TRAIL_N = 360;
 const FOV = 45;
@@ -71,7 +72,20 @@ function ellipsoidGeometry(re, rp) {
 // 타이탄: Cassini ISS 근적외선(938nm) 모자이크(흑백 — 연무를 뚫는 파장으로 본 밝기, 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·타이탄). 나머지는 단색이라 돌려도 보이지 않는다
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·타이탄·포보스·데이모스). 나머지는 단색이라 돌려도 보이지 않는다
+// 포보스·데이모스는 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
+function loadShape(b) {
+  fetch(`textures/${b.key}_shape.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
+    const { positions, index } = parseShape(buf);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    b.mesh.geometry.dispose();
+    b.mesh.geometry = geo;
+  }).catch(e => console.warn(`모양 모형을 못 불러옴: ${b.key} (${e}) — 구로 둔다`));
+}
 const ALL = [...BODIES, ...MOONS];
 const bodies = ALL.map(b => {
   const fine = TEXTURED.has(b.key) || b.key in SURFACE_UNDER;
@@ -96,9 +110,10 @@ const bodies = ALL.map(b => {
     trail.frustumCulled = false;
     scene.add(trail);
   }
-  return { ...b, mesh, trail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
+  return { ...b, reach: SHAPE_REACH[b.key] ?? b.radius, mesh, trail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
+for (const k of SHAPED) loadShape(byKey[k]);
 
 // ---------- 토성 고리 ----------
 // 토성 몸체의 자식으로 적도면(로컬 XZ)에 둔다. 밝기·비침·그림자 식은 src/rings.js와 같다(테스트는 그쪽에).
@@ -274,7 +289,7 @@ const halfV = () => (FOV / 2) * Math.PI / 180;
 const halfH = (w = stageW) => Math.atan(Math.tan(halfV()) * w / viewH);
 const pxPerRad = () => (viewH / 2) / Math.tan(halfV());
 // 천체가 좁은 쪽 화면의 약 60%를 차지하는 거리
-const viewDist = (b, w) => b.radius / Math.sin(Math.min(halfV(), halfH(w)) * 0.6);
+const viewDist = (b, w) => b.reach / Math.sin(Math.min(halfV(), halfH(w)) * 0.6);
 // 전체 보기: 해왕성 궤도(약 30AU)가 기울여 본 화면에 들어오는 거리
 const OVERVIEW_TILT = 55 * Math.PI / 180;
 const overviewDist = w => Math.max(33 * AU_KM / Math.tan(halfH(w)), 33 * AU_KM * Math.sin(OVERVIEW_TILT) * 1.3 / Math.tan(halfV())); // 세로는 가까운 쪽이 원근으로 커져서 여유 1.3배
@@ -328,7 +343,7 @@ function focusPosition(now) {
   if (s >= 1) {
     state.fly = null;
     controls.enabled = true;
-    controls.minDistance = byKey[state.focus].radius * 1.15;
+    controls.minDistance = byKey[state.focus].reach * 1.15;
     updateAtmoButton();
     if (f.next) flyTo(f.next);
   }
@@ -376,7 +391,7 @@ function updateLabels() {
     const { x, y, ndcX, front, dist } = scr[key];
     // 조작부에 가린 아래쪽(viewH 밑)은 보이지 않는 것으로 친다
     const visible = front && Math.abs(ndcX) < 1.02 && y > -0.01 * H && y < viewH + 0.01 * H;
-    const pr = (b.radius / dist) * ppr;
+    const pr = (b.reach / dist) * ppr;
     b.pixelRadius = pr;
     // 겹침은 이름이 실제로 놓일 상자로 본다 — 큰 천체는 이름이 원판 위로 떨어져 있어 중심끼리 재면 못 잡는다
     const nameW = b.nameW || b.name.length * 15; // 숨어 있던 이름표는 너비를 잴 수 없어 어림한다
@@ -388,7 +403,7 @@ function updateLabels() {
     const clash = placed.some(q => box[0] < q[2] + 4 && q[0] < box[2] + 4 && box[1] < q[3] + 4 && q[1] < box[3] + 4);
     const p = b.parent && scr[b.parent];
     const huddled = p && p.front && key !== state.focus && Math.hypot(p.x - x, p.y - y) < MOON_SEP_PX;
-    if (!visible || clash || huddled || dist < b.radius) { b.label.style.display = 'none'; continue; }
+    if (!visible || clash || huddled || dist < b.reach) { b.label.style.display = 'none'; continue; }
     placed.push(box);
     b.label.style.display = '';
     b.label.style.transform = `translate(${x}px, ${y}px)`;
@@ -602,7 +617,7 @@ function step(now = performance.now()) {
     if (b.key === 'sun') sunLight.position.copy(b.mesh.position);
     if (b.trail) {
       // 행성이 화면에서 커지면 궤도선이 행성을 뚫고 지나가 보이므로 흐리게 한다
-      const pr = (b.radius / b.mesh.position.distanceTo(camera.position)) * ppr;
+      const pr = (b.reach / b.mesh.position.distanceTo(camera.position)) * ppr;
       let op = THREE.MathUtils.clamp(1 - (pr - 3) / 25, 0, 1);
       if (b.parent) {
         // 위성 궤도가 화면에서 행성 둘레의 작은 얼룩일 때는 감춘다(궤도 반지름 12→30px에서 나타남)
@@ -654,7 +669,7 @@ document.fonts?.ready.then(() => { for (const b of bodies) b.nameW = 0; });
 
 // 처음 화면: 태양계 전체
 camera.position.copy(OVERVIEW_DIR).multiplyScalar(overviewDist());
-controls.minDistance = byKey.sun.radius * 1.15;
+controls.minDistance = byKey.sun.reach * 1.15;
 updatePositions(julianDateTT(state.simMs));
 markFocus();
 applyAtmosphere();
