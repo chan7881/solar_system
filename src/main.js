@@ -72,12 +72,14 @@ function ellipsoidGeometry(re, rp) {
 
 // 짙은 대기에 가려 겉에서는 표면이 안 보이는 천체 — 「대기 끄기」를 누르면 표면 지도로 바꾼다(처음 누를 때 받는다).
 // 금성: Magellan 레이더 지도(흑백, 레이더 반사 세기 — 눈으로 보는 색이 아니다)
-const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg' };
+// 타이탄: Cassini ISS 근적외선(938nm) 모자이크(흑백 — 연무를 뚫는 파장으로 본 밝기, 눈으로 보는 색이 아니다)
+const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(지금은 달). 나머지는 단색이라 돌려도 보이지 않는다
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·타이탄). 나머지는 단색이라 돌려도 보이지 않는다
 const ALL = [...BODIES, ...MOONS];
 const bodies = ALL.map(b => {
-  const geo = b.parent ? new THREE.SphereGeometry(b.radius, ...(TEXTURED.has(b.key) ? [96, 48] : [48, 24])) : ellipsoidGeometry(b.re, b.rp);
+  const fine = TEXTURED.has(b.key) || b.key in SURFACE_UNDER;
+  const geo = b.parent ? new THREE.SphereGeometry(b.radius, ...(fine ? [96, 48] : [48, 24])) : ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
@@ -306,6 +308,7 @@ function flyTo(key, opts = {}) {
   state.fly = { from, to: key, t0: performance.now(), dur, d0, d1, D, cut: [w[0] / total, (w[0] + w[1]) / total], dir0, dir1 };
   controls.enabled = false;
   updateAtmoButton();
+  if (!state.atmosphere) applyAtmosphere(); // 대기를 끈 채로 왔으면 새 초점의 지도를 받기 시작
 }
 
 function focusPosition(now) {
@@ -439,13 +442,16 @@ function applyAtmosphere() {
   for (const [key, url] of Object.entries(SURFACE_UNDER)) {
     const b = byKey[key];
     if (state.atmosphere) { setMap(b.mesh.material, null, b.color); continue; }
+    // 지도는 그 천체에 갈 때 처음 받는다(한 곳에서 끄면 다른 천체 지도까지 받지 않게) — 날아가기를 시작할 때 다시 부른다
+    if (key !== state.focus && !surfaceTex[key]) continue;
     // 받는 동안에는 대기 색을 그대로 둔다(빈 질감을 넣으면 까맣게 된다)
     (surfaceTex[key] ||= loadTexture(url)).then(tex => {
       if (!state.atmosphere) setMap(b.mesh.material, tex);
     }, () => {
       delete surfaceTex[key];
-      console.warn(`표면 지도를 못 불러옴: ${url} — 대기를 다시 켠다`);
-      state.atmosphere = true; applyAtmosphere(); // 단추와 화면이 어긋나지 않게
+      console.warn(`표면 지도를 못 불러옴: ${url}`);
+      // 보고 있는 천체가 실패했으면 대기를 다시 켠다(단추와 화면이 어긋나지 않게). 이미 떠났으면 대기 색 그대로 둔다
+      if (key === state.focus && !state.atmosphere) { state.atmosphere = true; applyAtmosphere(); updateAtmoButton(); }
     });
   }
 }
