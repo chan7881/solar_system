@@ -30,11 +30,25 @@ const sunLight = new THREE.PointLight(0xffffff, 3, 0, 0);
 scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
+// 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
+const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter']);
+const texLoader = new THREE.TextureLoader();
+function loadSurface(key, mat) {
+  texLoader.load(`textures/${key}_2k.jpg`, tex => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    mat.map = tex;
+    mat.color.set(0xffffff);
+    mat.needsUpdate = true;
+  }, undefined, () => console.warn(`표면 지도를 못 불러옴: textures/${key}_2k.jpg — 단색으로 둔다`));
+}
+
 const bodies = BODIES.map(b => {
   const geo = new THREE.SphereGeometry(b.radius, 96, 48);
   const mat = b.key === 'sun'
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
+  if (TEXTURED.has(b.key)) loadSurface(b.key, mat);
   const mesh = new THREE.Mesh(geo, mat);
   scene.add(mesh);
   let trail = null;
