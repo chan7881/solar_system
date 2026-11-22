@@ -52,7 +52,7 @@ export function ellipsoidRadius(re, rp, lat) {
 }
 
 // UTC 밀리초 → 율리우스일(TT). TT − UTC = 37 s(윤초, 2017~) + 32.184 s. 시안에서는 상수로 둔다.
-const TT_MINUS_UTC_S = 69.184;
+export const TT_MINUS_UTC_S = 69.184;
 export function julianDateTT(utcMs) {
   return 2440587.5 + (utcMs / 1000 + TT_MINUS_UTC_S) / 86400;
 }

@@ -52,6 +52,32 @@ if (matchMedia('(min-width: 760px)').matches) document.body.classList.add('sb-op
   <button id="atmo" type="button" role="switch" aria-checked="true" hidden>
     <span>대기</span><span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span><span id="atmo-state">켬</span>
   </button>
+  <div id="tools">
+    <button id="tool-dist" type="button" aria-pressed="false" aria-controls="dist">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7.2 15.5l9.6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2.5 2.2"/></svg>
+      <span>거리 재기</span>
+    </button>
+    <button id="tool-size" type="button" aria-controls="compare">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="13" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="17" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <span>크기 비교</span>
+    </button>
+  </div>
+  <section id="dist" class="tool-card" aria-label="거리 재기" hidden>
+    <div class="tc-head"><span class="tc-title">거리 재기</span>
+      <button class="tc-close" type="button" data-close="dist"><span>닫기</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div class="tc-pick">
+      <select id="dist-a" aria-label="첫째 천체"></select><span class="tc-sep" aria-hidden="true">↔</span><select id="dist-b" aria-label="둘째 천체"></select>
+    </div>
+    <div class="tc-val" aria-live="polite"><b id="dist-km"></b><span id="dist-sub"></span></div>
+    <div id="dist-ext" class="tc-ext" hidden>
+      <div class="tc-ext-row" aria-live="polite"><span class="tc-ext-k">최소</span><span id="dist-min"></span></div>
+      <div class="tc-ext-row" aria-live="polite"><span class="tc-ext-k">최대</span><span id="dist-max"></span></div>
+      <div class="tc-ext-foot"><span class="tc-ext-note">1800~2050년 중</span>
+        <button id="dist-ext-show" type="button" role="switch" aria-checked="false"><span>그때 위치</span><span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span></button>
+      </div>
+    </div>
+  </section>
   <button id="ly-open" type="button" aria-label="레이어 설정 열기" aria-controls="layers" title="레이어 설정">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
   </button>
@@ -81,6 +107,21 @@ if (matchMedia('(min-width: 760px)').matches) document.body.classList.add('sb-op
       </button>
     </div>
   </nav>
+
+  <section id="compare" aria-label="크기 비교" hidden>
+    <div class="cmp-head">
+      <div class="tc-head"><span class="tc-title">크기 비교</span><span class="cmp-note">실제 크기 비율</span>
+        <button class="tc-close" type="button" data-close="compare"><span>닫기</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="tc-pick">
+        <select id="cmp-a" aria-label="왼쪽 천체"></select><span class="tc-sep" aria-hidden="true">·</span><select id="cmp-b" aria-label="오른쪽 천체"></select>
+      </div>
+    </div>
+    <div class="cmp-ring" id="cmp-ring-a"></div><div class="cmp-ring" id="cmp-ring-b"></div>
+    <div class="cmp-tag" id="cmp-tag-a"><b></b><span class="d"></span></div>
+    <div class="cmp-tag" id="cmp-tag-b"><b></b><span class="d"></span></div>
+    <p id="cmp-ratio" aria-live="polite"></p>
+  </section>
 </main>
 
 <script type="module" src="src/main.js"></script>

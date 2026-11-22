@@ -6,6 +6,7 @@ import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
+import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText } from './tools.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
 const TRAIL_N = 360;
@@ -889,6 +890,282 @@ function updateClock() {
   }
 }
 
+// ---------- 도구: 거리 재기 · 크기 비교 ----------
+// 고르는 목록 — 사이드바와 같은 순서(태양 · 행성 · 위성 · 왜행성 · 혜성). 위성은 모천체 이름을 붙인다
+function fillPicker(sel) {
+  const g = navGroups(bodies);
+  const add = (label, list) => {
+    if (!list.length) return;
+    const og = document.createElement('optgroup');
+    og.label = label;
+    for (const b of list) {
+      const o = el('option', null, b.parent ? `${b.name} (${byKey[b.parent].name})` : b.name);
+      o.value = b.key;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  };
+  add('태양', [g.sun]);
+  add('행성', g.planets.map(e => e.body));
+  add('위성', [...g.planets, ...g.dwarfs, ...g.comets, ...g.other].flatMap(e => e.moons));
+  add('왜행성', g.dwarfs.map(e => e.body));
+  add('혜성', g.comets.map(e => e.body));
+  add('기타', g.other.map(e => e.body));
+}
+const distEl = document.getElementById('dist');
+const compareEl = document.getElementById('compare');
+const distBtn = document.getElementById('tool-dist');
+const sizeBtn = document.getElementById('tool-size');
+const pickers = {
+  dist: [document.getElementById('dist-a'), document.getElementById('dist-b')],
+  size: [document.getElementById('cmp-a'), document.getElementById('cmp-b')],
+};
+state.tool = null; // 'dist' | 'size' | null
+state.pair = { dist: defaultPair('sun'), size: defaultPair('sun') };
+for (const [tool, sels] of Object.entries(pickers)) {
+  sels.forEach((sel, i) => {
+    fillPicker(sel);
+    sel.addEventListener('change', () => {
+      state.pair[tool][i] = sel.value;
+      if (tool === 'size') buildCompare();
+      else lastDist = '';
+    });
+  });
+}
+// 도구를 열 때마다 「지구 · 지금 보는 천체」로 시작한다
+function setTool(t) {
+  state.tool = t;
+  if (t) {
+    state.pair[t] = defaultPair(state.focus);
+    pickers[t].forEach((sel, i) => { sel.value = state.pair[t][i]; });
+    if (NARROW.matches) { setSidebar(false); setLayerPanel(false); } // 폰에서는 한쪽만 연다
+  }
+  distEl.hidden = t !== 'dist';
+  distBtn.setAttribute('aria-pressed', String(t === 'dist'));
+  compareEl.hidden = t !== 'size';
+  document.body.classList.toggle('cmp-open', t === 'size');
+  lastDist = '';
+  if (t === 'dist') distTop = distEl.offsetTop;
+  if (t === 'size') buildCompare();
+  if (booted) draw();
+}
+distBtn.addEventListener('click', () => setTool(state.tool === 'dist' ? null : 'dist'));
+sizeBtn.addEventListener('click', () => setTool('size'));
+for (const b of document.querySelectorAll('.tc-close')) b.addEventListener('click', () => setTool(null));
+const distOn = () => state.tool === 'dist' && state.layers.ui; // 사용자 화면을 끄면 창과 함께 선·글자도 감춘다(닫기 단추가 없어지므로)
+const toolShows = key => distOn() && state.pair.dist.includes(key); // 고른 천체는 레이어를 꺼 두었어도 보인다
+
+// 거리 재기 — 두 천체 중심을 잇는 선 + 선 가운데 거리 · 창에는 km · AU · 빛이 가는 시간
+const MEASURE = getComputedStyle(document.documentElement).getPropertyValue('--measure').trim() || '#ffd166';
+const distLine = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
+  new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.9, depthWrite: false }));
+distLine.frustumCulled = false;
+distLine.renderOrder = 3;
+distLine.visible = false;
+scene.add(distLine);
+const distTag = el('div', 'dlabel');
+distTag.style.display = 'none';
+labelLayer.appendChild(distTag);
+const distKmEl = document.getElementById('dist-km'), distSubEl = document.getElementById('dist-sub');
+let lastDist = '';
+let distTop = 60; // 거리 창 위 끝(px) — 매 장면 읽으면 배치를 다시 계산하므로 열 때·크기 바뀔 때만 잰다
+function updateDist() {
+  const on = distOn();
+  const [ka, kb] = state.pair.dist;
+  distLine.visible = on && ka !== kb;
+  distTag.style.display = 'none';
+  if (!on) return;
+  const A = byKey[ka], B = byKey[kb];
+  const t = ka === kb ? { km: '같은 천체', sub: '' } : distanceText(distanceKm(A.pos, B.pos), AU_KM);
+  const s = t.km + '|' + t.sub;
+  if (s !== lastDist) { distKmEl.textContent = t.km; distSubEl.textContent = t.sub; lastDist = s; }
+  if (ka === kb) return;
+  const arr = distLine.geometry.attributes.position.array;
+  A.mesh.position.toArray(arr, 0);
+  B.mesh.position.toArray(arr, 3);
+  distLine.geometry.attributes.position.needsUpdate = true;
+  // 화면에 보이는 선 구간(날짜 줄 아래 ~ 조작부 위)의 가운데에 거리 — 그 구간이 짧으면(두 이름표 사이에 끼면) 쓰지 않는다.
+  // 한쪽 끝이 카메라 뒤면 투영이 뒤집혀 쓰지 않는다. 거리 창 밑에 들면 창이 덮는다(값은 창에 있다)
+  const pa = project(A), pb = project(B);
+  if (!pa.front || !pb.front) return;
+  const pm = visibleMid(pa.x, pa.y, pb.x, pb.y, 50, distTop + 24, stageW - 50, viewH - 8);
+  if (!pm || pm.len < 120) return;
+  distTag.textContent = t.km;
+  distTag.style.display = '';
+  distTag.style.transform = `translate(${pm.x}px, ${pm.y}px) translate(-50%, -150%)`;
+}
+
+// 최소·최대 거리(계산 범위 1800~2050 전체) — 위성끼리는 수 초 걸려 웹 워커에서 셈하고 두 천체 짝마다 기억한다.
+// 「그때 위치」를 켜면 그 순간 두 천체가 있던 자리를 점으로 찍고 잇는다(몸체는 두지 않는다)
+const extEl = document.getElementById('dist-ext');
+const extRow = { min: document.getElementById('dist-min'), max: document.getElementById('dist-max') };
+const extShowBtn = document.getElementById('dist-ext-show');
+const EXT_RANGE = [julianDateTT(VALID_FROM), julianDateTT(VALID_TO)];
+const extCache = new Map(); // 「이름순 a|b」 → { pending } | { error } | { min, max } (위치는 장면 좌표, 천체 키로)
+let extWorker = null, lastExt = '';
+state.extShow = false;
+extShowBtn.addEventListener('click', () => {
+  state.extShow = !state.extShow;
+  extShowBtn.setAttribute('aria-checked', String(state.extShow));
+  if (booted) draw();
+});
+const extKey = (a, b) => [a, b].sort().join('|');
+function extDone(id, data) {
+  const [p, q] = id.split('|');
+  const conv = e => ({ jd: e.jd, km: e.km, pos: { [p]: eclipticToScene(e.a), [q]: eclipticToScene(e.b) } });
+  extCache.set(id, data.error ? { error: data.error } : { min: conv(data.result.min), max: conv(data.result.max) });
+  lastExt = '';
+  if (booted) draw();
+}
+function requestExt(a, b) {
+  const id = extKey(a, b);
+  if (extCache.has(id)) return extCache.get(id);
+  extCache.set(id, { pending: true });
+  try {
+    if (!extWorker) {
+      extWorker = new Worker(new URL('./extremes_worker.js', import.meta.url), { type: 'module' });
+      extWorker.onmessage = ({ data }) => extDone(data.id, data);
+      // 워커가 죽으면(모듈 워커를 못 띄우는 브라우저 등) 버린다 — 남겨 두면 다음 짝이 영영 「계산 중…」
+      extWorker.onerror = () => {
+        extWorker.terminate(); extWorker = null;
+        for (const [k, v] of extCache) if (v.pending) extDone(k, { error: '워커' });
+      };
+    }
+    const [p, q] = id.split('|');
+    extWorker.postMessage({ id, a: p, b: q, jd0: EXT_RANGE[0], jd1: EXT_RANGE[1] });
+  } catch { extDone(id, { error: '워커' }); }
+  return extCache.get(id);
+}
+const extLines = {}, extDots = {}, extTags = {};
+for (const k of ['min', 'max']) {
+  const line = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
+    new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.45, depthWrite: false }));
+  line.frustumCulled = false;
+  line.renderOrder = 3;
+  line.visible = false;
+  scene.add(line);
+  extLines[k] = line;
+  extDots[k] = [el('div', 'xdot'), el('div', 'xdot')];
+  extTags[k] = [el('div', 'xlabel'), el('div', 'xlabel')]; // 점마다 「지구(최소)」
+  for (const e of [...extDots[k], ...extTags[k]]) { e.style.display = 'none'; labelLayer.appendChild(e); }
+}
+const extV = new THREE.Vector3();
+function projectPoint(v) {
+  extV.copy(v).applyMatrix4(camera.matrixWorldInverse);
+  const front = extV.z < 0;
+  extV.applyMatrix4(camera.projectionMatrix);
+  return { x: (extV.x + 1) / 2 * stageW, y: (1 - extV.y) / 2 * stageH, front };
+}
+const showAt = (e, x, y, tf) => { e.style.display = ''; e.style.transform = `translate(${x}px, ${y}px)${tf}`; };
+function updateExt(fp) {
+  const [ka, kb] = state.pair.dist;
+  const on = distOn() && ka !== kb;
+  extEl.hidden = !on;
+  const r = on ? requestExt(ka, kb) : null;
+  const ready = r && r.min;
+  if (on) {
+    const s = r.pending ? '계산 중…' : r.error ? '계산하지 못함' : extremeText(r.min) + '|' + extremeText(r.max);
+    if (s !== lastExt) {
+      const [lo, hi] = ready ? s.split('|') : [s, s];
+      extRow.min.textContent = lo; extRow.max.textContent = hi; lastExt = s;
+    }
+  }
+  const show = ready && state.extShow;
+  const tags = []; // { x, y, names, words }
+  for (const k of ['min', 'max']) {
+    extLines[k].visible = !!show;
+    for (const e of [...extDots[k], ...extTags[k]]) e.style.display = 'none';
+    if (!show) continue;
+    // 장면 좌표는 초점 천체가 원점 — 그 순간의 위치에서 지금 초점 위치를 뺀다
+    const pts = [ka, kb].map(key => { const p = r[k].pos[key]; return new THREE.Vector3(p[0] - fp[0], p[1] - fp[1], p[2] - fp[2]); });
+    const arr = extLines[k].geometry.attributes.position.array;
+    pts[0].toArray(arr, 0); pts[1].toArray(arr, 3);
+    extLines[k].geometry.attributes.position.needsUpdate = true;
+    const sp = pts.map(projectPoint);
+    const word = k === 'min' ? '최소' : '최대';
+    sp.forEach((p, i) => {
+      if (!p.front) return;
+      showAt(extDots[k][i], p.x, p.y, '');
+      // 이름이 붙을 자리가 이미 있는 이름표와 겹치면(14px 안) 하나로 — 「지구·달(최소)」「지구(최소·최대)」
+      const name = byKey[[ka, kb][i]].name;
+      const near = tags.find(t => Math.hypot(t.x - p.x, t.y - p.y) < 14);
+      if (!near) { tags.push({ x: p.x, y: p.y, names: [name], words: [word], el: extTags[k][i] }); return; }
+      if (!near.names.includes(name)) near.names.push(name);
+      if (!near.words.includes(word)) near.words.push(word);
+    });
+  }
+  for (const t of tags) {
+    t.el.textContent = `${t.names.join('·')}(${t.words.join('·')})`;
+    showAt(t.el, t.x, t.y, ' translate(7px, -50%)');
+  }
+}
+
+// 크기 비교 — 따로 둔 장면에 두 천체를 같은 축척으로 나란히. 북극을 위로(20° 앞으로 기울여 고리가 보이게),
+// 경도 0°를 앞으로, 왼쪽 앞 위에서 빛을 비춘다. 몸체 모양·지도는 본 장면의 것을 함께 쓴다
+const cmpScene = new THREE.Scene();
+cmpScene.add(new THREE.AmbientLight(0xffffff, 0.04));
+const cmpLight = new THREE.DirectionalLight(0xffffff, 3); // 해 빛 세기(PointLight 3)와 같은 눈금
+cmpLight.position.set(-1, 0.5, 1.2);
+cmpScene.add(cmpLight);
+const cmpCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2e7);
+cmpCam.position.set(0, 0, 1e7);
+// 구의 +X(경도 0°)를 카메라 쪽(+Z)으로 돌린 뒤 북극을 카메라 쪽으로 20° 기울인다
+const CMP_POSE = new THREE.Quaternion().setFromEuler(new THREE.Euler(20 * Math.PI / 180, -Math.PI / 2, 0, 'XYZ'));
+const cmpHead = compareEl.querySelector('.cmp-head');
+const cmpRatio = document.getElementById('cmp-ratio');
+const cmpTags = ['a', 'b'].map(s => ({ tag: document.getElementById('cmp-tag-' + s), ring: document.getElementById('cmp-ring-' + s) }));
+let cmpItems = [], cmpHeadH = 0;
+function buildCompare() {
+  for (const it of cmpItems) cmpScene.remove(it.obj);
+  cmpItems = state.pair.size.map((k, i) => {
+    const b = byKey[k];
+    const obj = new THREE.Mesh(b.mesh.geometry, b.mesh.material);
+    obj.quaternion.copy(CMP_POSE);
+    const ring = k === 'saturn' && ringMesh.visible;
+    if (ring) obj.add(new THREE.Mesh(ringMesh.geometry, ringMat));
+    cmpScene.add(obj);
+    const d = diameterOf(b, SHAPED.has(k));
+    cmpTags[i].tag.querySelector('b').textContent = b.name;
+    cmpTags[i].tag.querySelector('.d').textContent = fmtDiameter(d);
+    // 반폭: 토성은 고리 바깥 끝까지
+    return { b, obj, ring, d: d.km, w: ring ? RING_EDGES.aOut : b.reach, h: b.reach, half: cmpTags[i].tag.offsetWidth / 2 };
+  });
+  cmpHeadH = cmpHead.offsetHeight;
+  const [A, B] = cmpItems;
+  cmpRatio.textContent = ratioText(A.b, A.d, B.b, B.d);
+}
+// 모양 파일(포보스·데이모스)·고리 단면이 비교 화면을 연 뒤에 도착하면 새로 짠다
+const cmpStale = () => cmpItems.some(it => it.obj.geometry !== it.b.mesh.geometry || (it.b.key === 'saturn' && it.ring !== ringMesh.visible));
+function drawCompare() {
+  if (cmpStale()) buildCompare();
+  const W = stageW, H = stageH;
+  const L = compareLayout(cmpItems[0], cmpItems[1], W, cmpHeadH + 12, H - 120);
+  cmpCam.left = -W / 2 / L.s; cmpCam.right = W / 2 / L.s;
+  cmpCam.top = H / 2 / L.s; cmpCam.bottom = -H / 2 / L.s;
+  cmpCam.updateProjectionMatrix();
+  const hMax = Math.max(cmpItems[0].h, cmpItems[1].h);
+  cmpItems.forEach((it, i) => {
+    const x = i ? L.xB : L.xA;
+    it.obj.position.set((x - W / 2) / L.s, (H / 2 - L.y) / L.s, 0);
+    it.obj.updateMatrixWorld();
+    // 토성: 고리 셰이더·고리 그림자가 쓰는 해·카메라 방향을 이 장면 것으로(본 장면은 다음 step에서 되돌린다)
+    if (it.b.key === 'saturn') {
+      qInv.copy(it.obj.quaternion).invert();
+      ringU.uSunL.value.copy(cmpLight.position).normalize().applyQuaternion(qInv);
+      ringU.uCamL.value.copy(cmpCam.position).sub(it.obj.position).applyQuaternion(qInv);
+    }
+    const { tag, ring } = cmpTags[i];
+    // 이름표는 천체 밑 가운데 — 화면 끝에서 잘리면 안쪽으로 당긴다
+    const tx = Math.min(W - it.half - 8, Math.max(it.half + 8, x));
+    tag.style.transform = `translate(${tx}px, ${L.y + hMax * L.s + 10}px) translate(-50%, 0)`;
+    // 몇 화소밖에 안 되는 천체는 동그라미로 자리를 보인다
+    const tiny = it.h * L.s < 6;
+    ring.style.display = tiny ? 'block' : 'none';
+    if (tiny) ring.style.transform = `translate(${x}px, ${L.y}px)`;
+  });
+  renderer.render(cmpScene, cmpCam);
+}
+
 // ---------- 한 장면 ----------
 let lastT = performance.now();
 function step(now = performance.now()) {
@@ -910,7 +1187,8 @@ function step(now = performance.now()) {
     b.mesh.position.set(rel[0], rel[1], rel[2]);
     if (b.key === 'sun') sunLight.position.copy(b.mesh.position);
     // 날아가는 동안에는 출발한 천체도 남긴다(레이어를 끈 천체에서 떠날 때 갑자기 사라지지 않게)
-    b.mesh.visible = bodyShown(bodies, b.key, L, state.focus) || b.key === state.fly?.from;
+    const layerShown = bodyShown(bodies, b.key, L, state.focus) || b.key === state.fly?.from;
+    b.mesh.visible = layerShown || toolShows(b.key); // 거리 재기로 고른 천체는 몸체만 보이고 궤도선은 레이어를 따른다
     if (b.trail) {
       // 행성이 화면에서 커지면 궤도선이 행성을 뚫고 지나가 보이므로 흐리게 한다
       const pr = (b.reach / b.mesh.position.distanceTo(camera.position)) * ppr;
@@ -923,8 +1201,8 @@ function step(now = performance.now()) {
       }
       b.trail.material.opacity = op;
       b.orbitLine.material.opacity = op * ORBIT_OPACITY;
-      b.trail.visible = b.mesh.visible && L.trails && op > 0.01;
-      b.orbitLine.visible = b.mesh.visible && L.orbits && op > 0.01;
+      b.trail.visible = layerShown && L.trails && op > 0.01;
+      b.orbitLine.visible = layerShown && L.orbits && op > 0.01;
       if (b.trail.visible || b.orbitLine.visible) updateTrail(b, jd); // 안 보이는 궤도선은 다시 계산하지 않는다
       b.trail.position.copy(b.mesh.position);
       b.orbitLine.position.copy(b.mesh.position);
@@ -933,13 +1211,19 @@ function step(now = performance.now()) {
   if (!state.fly) controls.update();
   else camera.lookAt(0, 0, 0);
   camera.updateMatrixWorld();
+  updateClock();
+  if (state.tool === 'size') return; // 크기 비교 중에는 본 장면을 그리지 않는다 — 위치·시각만 이어 간다
   updateClouds(jd);
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateSky(updateGroupLabels(updateLabels()));
-  updateClock();
+  updateDist();
+  updateExt(fp);
 }
 
-function draw() { renderer.render(scene, camera); }
+function draw() {
+  if (state.tool === 'size') drawCompare();
+  else renderer.render(scene, camera);
+}
 
 // 무대 크기에 맞추고, 화면 중심을 조작부 위 보이는 영역의 가운데로 옮긴다(세로 화각 45°도 그 영역 기준)
 const panelEl = document.getElementById('panel');
@@ -956,6 +1240,8 @@ function resize() {
 // setSize는 캔버스를 비우므로 그 자리에서 다시 그린다 — 안 그리면 전환 중에 검은 화면이 깜빡인다
 function refit() {
   resize();
+  if (state.tool === 'dist') distTop = distEl.offsetTop;
+  if (state.tool === 'size') cmpHeadH = cmpHead.offsetHeight;
   if (!booted) return;
   updateSky(updateGroupLabels(updateLabels()));
   draw();
@@ -980,4 +1266,4 @@ booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose };
+window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };

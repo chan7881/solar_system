@@ -9,6 +9,7 @@
   --accent: #7cc4ff;
   --accent-fg: #04121f;
   --live: #5fdc8a;
+  --measure: #ffd166; /* 거리 재기 선·글자 */
   --sb-w: 248px;
   --push: 0px; /* 사이드바가 화면을 밀어내는 폭(넓은 화면에서 열렸을 때만) */
   --push-r: 0px; /* 오른쪽 레이어 창이 밀어내는 폭 */
@@ -171,3 +172,62 @@ body.sb-open #sb-open { display: none; }
 .rate-scale span:last-child::after { content: " →"; }
 .glabel { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 13px; font-weight: 600; letter-spacing: .06em;
   line-height: 18px; color: #c6cfdc; pointer-events: none; text-shadow: 0 0 3px #000, 0 0 6px #000; }
+
+/* ---------- 도구(거리 재기·크기 비교) ---------- */
+#tools { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(var(--panel-h) + 12px + 48px + 8px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 1; }
+#tools button { min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 10px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--panel); font-size: 14px; cursor: pointer; }
+#tools button:hover { background: #1b2230; }
+#tools button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; }
+body.ui-off #tools, body.ui-off #dist { display: none !important; }
+
+.tool-card { position: absolute; left: max(12px, env(safe-area-inset-left)); top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+  width: min(400px, calc(100% - 24px)); padding: 4px 12px 10px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); backdrop-filter: blur(8px); z-index: 1; }
+.tool-card[hidden], #compare[hidden] { display: none; }
+.tc-head { display: flex; align-items: center; gap: 8px; }
+.tc-title { font-size: 15px; font-weight: 700; }
+.tc-close { margin-left: auto; min-height: 44px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 10px; border: 0;
+  border-radius: 10px; background: none; font-size: 14px; color: var(--dim); cursor: pointer; }
+.tc-close:hover { background: var(--hover); }
+.tc-close svg { width: 18px; height: 18px; }
+.tc-pick { display: flex; align-items: center; gap: 6px; }
+.tc-pick select { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--solid); color: var(--fg); font: inherit; font-size: 15px; color-scheme: dark; cursor: pointer; }
+.tc-sep { flex: none; color: var(--dim); }
+.tc-val { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.tc-val b { font-size: 22px; color: var(--measure); font-variant-numeric: tabular-nums; }
+.tc-val span { font-size: 14px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.tc-ext { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 13px; }
+.tc-ext[hidden] { display: none; }
+.tc-ext-row { display: flex; gap: 8px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.tc-ext-k { flex: none; color: var(--measure); font-weight: 700; }
+.tc-ext-row span:last-child { color: var(--fg); }
+.tc-ext-foot { display: flex; align-items: center; gap: 8px; }
+.tc-ext-note { font-size: 12px; color: var(--dim); }
+#dist-ext-show { margin-left: auto; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 8px; border: 0;
+  border-radius: 10px; background: none; font-size: 13px; color: var(--fg); cursor: pointer; }
+#dist-ext-show:hover { background: var(--hover); }
+.xlabel { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 11px; color: var(--measure); pointer-events: none;
+  text-shadow: 0 0 4px #000, 0 0 2px #000; }
+.xdot { position: absolute; left: 0; top: 0; width: 7px; height: 7px; margin: -4.5px 0 0 -4.5px; border: 1px solid var(--measure);
+  border-radius: 50%; pointer-events: none; }
+.dlabel { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 13px; font-weight: 700; color: var(--measure);
+  pointer-events: none; text-shadow: 0 0 4px #000, 0 0 2px #000, 0 0 2px #000; }
+
+/* 크기 비교 화면 — 무대 전체를 덮고, 캔버스에는 비교 장면을 그린다 */
+#compare { position: absolute; inset: 0; z-index: 2; } /* 무대 전체를 막는다 — 끌기·확대가 숨은 본 카메라를 움직이지 않게 */
+#compare .cmp-head { pointer-events: auto; padding: max(4px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
+  background: var(--panel); border-bottom: 1px solid var(--line); backdrop-filter: blur(8px); }
+#compare .cmp-head > * { max-width: 620px; margin-left: auto; margin-right: auto; }
+.cmp-note { font-size: 12px; color: var(--dim); }
+body.cmp-open #labels, body.cmp-open #top, body.cmp-open #panel, body.cmp-open #atmo, body.cmp-open #ly-open,
+body.cmp-open #tools, body.cmp-open #dist { display: none !important; }
+.cmp-tag { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  white-space: nowrap; text-shadow: 0 0 4px #000; transform: translate(-50%, 0); }
+.cmp-tag b { font-size: 16px; }
+.cmp-tag .d { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.cmp-ring { position: absolute; left: 0; top: 0; width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 1.5px solid var(--fg); border-radius: 50%; display: none; }
+#cmp-ratio { position: absolute; left: 0; right: 0; bottom: max(16px, env(safe-area-inset-bottom)); margin: 0; padding: 0 16px;
+  text-align: center; font-size: 17px; font-weight: 700; text-shadow: 0 0 4px #000; }
