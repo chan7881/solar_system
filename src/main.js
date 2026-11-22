@@ -20,6 +20,7 @@ const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
+const OCCLUDE = 1; // 혜성 코마·꼬리를 가리는 몸체의 층(drawGlow가 이 층만 깊이로 먼저 그린다)
 scene.background = new THREE.Color(0x000000);
 // 먼 면은 평소 2e11km(약 1,300AU) — 오르트 구름이 보일 만큼 물러날 때만 늘린다(로그 깊이의 가까운 쪽 정밀도를 아끼려고, updateClouds)
 const FAR_NEAR = 2e11;
@@ -105,6 +106,7 @@ const bodies = ALL.map(b => {
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
   if (TEXTURED.has(b.key)) loadSurface(b.key, mat);
   const mesh = new THREE.Mesh(geo, mat);
+  mesh.layers.enable(OCCLUDE);
   scene.add(mesh);
   let trail = null, orbitLine = null;
   if (b.key !== 'sun') {
@@ -190,6 +192,9 @@ const ringMat = new THREE.ShaderMaterial({
 const ringMesh = new THREE.Mesh(new THREE.BufferGeometry(), ringMat);
 ringMesh.visible = false;
 byKey.saturn.mesh.add(ringMesh);
+// 고리는 깊이를 안 쓰므로 궤도선(2)보다 나중에 그려야 고리 뒤의 선이 비침만큼 가려진다(먼저 그리면 선이 고리 위에 그대로 덮인다).
+// 고리 앞을 지나는 선은 토성 자신의 궤도선뿐인데, 고리가 크게 보일 때는 이미 흐려져 사라진다(step의 궤도선 흐리기). 거리 선(3)은 그 뒤
+ringMesh.renderOrder = 2.5;
 
 // 토성 표면에 지는 고리 그림자: 표면 점에서 해 쪽 빛줄기가 고리면을 지나는 반지름의 τ로 햇빛을 줄인다.
 // 햇빛(직접광)에만 곱한다 — 주변광은 남겨 밤 쪽과 같은 방식으로 어두워지게(해는 유일한 직접광)
@@ -1204,7 +1209,7 @@ const glowFS = /* glsl */`
 const glowMat = (color, gain) => new THREE.ShaderMaterial({
   uniforms: { uPpr: { value: 1 }, uSize: { value: 1 }, uGain: { value: gain }, uMaxPx: { value: MAX_POINT_PX }, uColor: { value: new THREE.Color(color) } },
   vertexShader: glowVS, fragmentShader: glowFS,
-  transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, // 깊이 판정은 한다(drawGlow가 먼저 그린 몸체 깊이)
 });
 // 코마: 카메라를 향한 사각형(정점 셰이더에서 화면 쪽으로 편다). ρ/Rc로 밝기 ∝ (1/ρ)·exp(−ρ/Rc)
 const comaMat = () => new THREE.ShaderMaterial({
@@ -1233,14 +1238,16 @@ const comaMat = () => new THREE.ShaderMaterial({
       float I = 0.025 / max(r, 0.02) * exp(-r) * (1.0 - smoothstep(3.0, 4.0, r));
       gl_FragColor = vec4(uColor * I * uGain, 1.0);
     }`,
-  transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, // 깊이 판정은 한다(drawGlow가 먼저 그린 몸체 깊이)
 });
 // 코마·꼬리는 따로 모아(반정밀 부동소수 화면) 1 − e^(−x)로 눌러 본 장면 위에 더한다 — 핵 근처처럼 겹쳐 아주 밝은 곳이
-// 하얗게 뭉개지지 않게(눈·사진기처럼 밝은 곳일수록 덜 밝아짐). 깊이는 보지 않는다(행성 뒤의 꼬리도 비친다 — 드문 경우라 둔다)
+// 하얗게 뭉개지지 않게(눈·사진기처럼 밝은 곳일수록 덜 밝아짐). 이 화면에는 본 장면 깊이를 옮길 수 없어서 몸체(OCCLUDE 층)를
+// 깊이로만 먼저 그리고 꼬리를 깊이 판정한다 — 행성·위성 뒤의 꼬리가 가려진다. 고리는 반투명이라 넣지 않았다(고리 뒤 꼬리는 그대로 비친다)
 const glowScene = new THREE.Scene();
 // 반정밀 부동소수 화면에 그릴 수 없는 GPU(일부 옛 모바일)는 8비트로 — 밝은 곳이 1에서 잘리지만 꼬리는 보인다
 const GLOW_TYPE = renderer.extensions.has('EXT_color_buffer_half_float') || renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType;
-const glowRT = new THREE.WebGLRenderTarget(1, 1, { type: GLOW_TYPE, depthBuffer: false });
+const glowRT = new THREE.WebGLRenderTarget(1, 1, { type: GLOW_TYPE, depthBuffer: true, samples: 4 }); // 다중 표본 — 행성 가장자리에서 꼬리가 계단지지 않게
+const occludeMat = new THREE.MeshBasicMaterial({ colorWrite: false });
 const glowQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
   uniforms: { tGlow: { value: glowRT.texture } },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
@@ -1259,15 +1266,19 @@ const glowQuadScene = new THREE.Scene().add(glowQuad);
 const glowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 function drawGlow() {
   if (!comets.some(C => C.dust.visible || C.coma.visible)) return;
-  const cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+  const cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha(), ac = renderer.autoClear;
+  renderer.autoClear = false; // 두 번째 그리기가 먼저 그린 몸체 깊이를 지우지 않게
   renderer.setRenderTarget(glowRT);
   renderer.setClearColor(0x000000, 0);
   renderer.clear();
+  // 몸체 깊이만 먼저(색은 안 씀) — 배경·조명·선·점은 OCCLUDE 층이 아니라 빠진다
+  const bg = scene.background;
+  scene.background = null; scene.overrideMaterial = occludeMat; camera.layers.set(OCCLUDE);
+  renderer.render(scene, camera);
+  scene.background = bg; scene.overrideMaterial = null; camera.layers.set(0);
   renderer.render(glowScene, camera);
   renderer.setRenderTarget(null);
   renderer.setClearColor(cc, ca); // 배경이 없는 크기 비교 장면이 투명하게 지워지지 않게
-  const ac = renderer.autoClear;
-  renderer.autoClear = false;
   renderer.render(glowQuadScene, glowCam);
   renderer.autoClear = ac;
 }
