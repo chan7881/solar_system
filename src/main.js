@@ -229,15 +229,32 @@ const earthU = {
   uNightColor: { value: srgb(1.0, 0.8, 0.5).multiplyScalar(1.6) },
   uRimK: { value: 1 + 100 / 6378.137 }, // 대기 껍질 = 지구 반지름 + 100km(카르만 선)
   uRimColor: { value: srgb(0.4, 0.65, 1.0).multiplyScalar(1.2) },
+  // 구름(2026-11-22): NASA GIBS VIIRS 가시광에서 뽑은 투명도(textures/earth_clouds_4k.jpg, tools/make_clouds.py). 고정 — 시간을 돌려도 안 움직인다.
+  uCloud: { value: null },
+  uCloudOn: { value: 0 },
+  uCloudOpacity: { value: 0.92 }, // 구름 껍질의 최대 불투명도 — 낮추면 아래 지표·밤 불빛이 더 비친다
+  uShadow: { value: 0.4 },        // 구름 그림자가 지표를 어둡게 하는 정도(구름 투명도 1일 때)
 };
+const CLOUD_H_KM = 10; // 구름 껍질 높이(대류권 윗부분 — 가장자리에서 지표와 떠 보이게)
 loadTexture('textures/earth_night_2k.jpg').then(tex => { earthU.uNight.value = tex; },
   () => console.warn('밤 불빛 질감을 못 불러옴 — 밤 쪽은 어둡게 둔다'));
+loadTexture('textures/earth_clouds_4k.jpg').then(tex => {
+  tex.colorSpace = THREE.NoColorSpace; // 투명도 자료 — 밝기를 그대로 읽는다(색 변환 없음)
+  tex.needsUpdate = true;
+  earthU.uCloud.value = tex;
+}, () => console.warn('구름 질감을 못 불러옴 — 구름 없이 둔다'));
 byKey.earth.mesh.material.onBeforeCompile = sh => {
-  Object.assign(sh.uniforms, { uSunL: earthU.uSunL, uNight: earthU.uNight, uNightOn: earthU.uNightOn, uNightColor: earthU.uNightColor });
+  Object.assign(sh.uniforms, { uSunL: earthU.uSunL, uNight: earthU.uNight, uNightOn: earthU.uNightOn, uNightColor: earthU.uNightColor,
+    uCloud: earthU.uCloud, uCloudOn: earthU.uCloudOn, uShadow: earthU.uShadow });
   sh.vertexShader = 'varying vec3 vNl; varying vec2 vUvN;\n' +
     sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvNl = normal; vUvN = uv;');
-  sh.fragmentShader = `varying vec3 vNl; varying vec2 vUvN;\nuniform vec3 uSunL; uniform sampler2D uNight; uniform float uNightOn; uniform vec3 uNightColor;\n${NIGHT_GLSL}\n` +
-    sh.fragmentShader.replace('#include <emissivemap_fragment>', `
+  sh.fragmentShader = `varying vec3 vNl; varying vec2 vUvN;\nuniform vec3 uSunL; uniform sampler2D uNight; uniform float uNightOn; uniform vec3 uNightColor; uniform sampler2D uCloud; uniform float uCloudOn; uniform float uShadow;\n${NIGHT_GLSL}\n` +
+    sh.fragmentShader.replace('#include <map_fragment>', `
+    #include <map_fragment>
+    // 구름 그림자: 같은 구름 지도를 지표 바로 아래(어긋남 0)에 흐리게(mip 편향) 겹쳐 어둡게 한다. 구름 높이 10km의 그림자는 낮은 태양에서도
+    // 4K 지도(한 칸 약 10km) 한두 칸만 밀려서, 따로 구운 그림자 질감이나 광선 계산 없이 이 질감 읽기 한 번으로 충분하다.
+    if (uCloudOn > 0.5) diffuseColor.rgb *= 1.0 - uShadow * texture2D(uCloud, vUvN, 1.5).r;
+    `).replace('#include <emissivemap_fragment>', `
     #include <emissivemap_fragment>
     if (uNightOn > 0.5) {
       float lit = texture2D(uNight, vUvN).r;
@@ -270,11 +287,45 @@ const atmoMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * earthU.uRimK.
       #include <colorspace_fragment>
     }`,
 }));
+// 구름 껍질: 지표 위 CLOUD_H_KM 높이. 태양 쪽만 밝고(낮) 박명엔 붉게, 밤 쪽은 거의 검게 — 아래 밤 불빛 위를 불투명도만큼 덮는다.
+const CLOUD_K = 1 + CLOUD_H_KM / 6378.137;
+const cloudMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * CLOUD_K, byKey.earth.rp * CLOUD_K), new THREE.ShaderMaterial({
+  uniforms: earthU,
+  transparent: true, depthWrite: false,
+  vertexShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    varying vec3 vN; varying vec2 vUvC;
+    void main() {
+      vN = normal; vUvC = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      #include <logdepthbuf_vertex>
+    }`,
+  fragmentShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    uniform sampler2D uCloud; uniform vec3 uSunL; uniform float uCloudOpacity;
+    varying vec3 vN; varying vec2 vUvC;
+    void main() {
+      #include <logdepthbuf_fragment>
+      float a = texture2D(uCloud, vUvC).r * uCloudOpacity;
+      float mu = dot(normalize(vN), uSunL);
+      float day = smoothstep(-0.1, 0.35, mu);
+      vec3 tint = mix(vec3(1.0, 0.5, 0.28), vec3(1.0, 0.99, 0.97), smoothstep(0.0, 0.25, mu));
+      vec3 col = tint * (0.012 + 0.9 * day);
+      gl_FragColor = vec4(col, a);
+      #include <colorspace_fragment>
+    }`,
+}));
+cloudMesh.renderOrder = 2.4; // 가장자리 빛(2.5)보다 먼저 — 그 빛이 구름 위에 더해진다
+byKey.earth.mesh.add(cloudMesh);
 atmoMesh.renderOrder = 2.5; // 궤도선(2) 다음 — 고리와 같은 까닭(깊이를 안 써서 먼저 그리면 뒤의 선이 덮는다)
 byKey.earth.mesh.add(atmoMesh);
 function updateEarthAtmo() {
   const m = byKey.earth.mesh;
   atmoMesh.visible = m.visible && state.atmosphere;
+  earthU.uCloudOn.value = earthU.uCloud.value && state.atmosphere ? 1 : 0; // 「대기」 스위치와 함께 켜고 끈다
+  cloudMesh.visible = m.visible && earthU.uCloudOn.value === 1;
   earthU.uNightOn.value = earthU.uNight.value && state.layers.nightLights ? 1 : 0;
   if (!m.visible) return;
   qInv.copy(m.quaternion).invert();
