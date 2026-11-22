@@ -434,7 +434,7 @@ const viewDist = (b, w) => b.reach / Math.sin(Math.min(halfV(), halfH(w)) * 0.6)
 // 전체 보기: 반지름 rAU의 원반(태양계 전체는 해왕성 궤도 약 30AU → 33AU)이 기울여 본 화면에 들어오는 거리
 const OVERVIEW_TILT = 55 * Math.PI / 180;
 const overviewFit = rAU => w => Math.max(rAU * AU_KM / Math.tan(halfH(w)), rAU * AU_KM * Math.sin(OVERVIEW_TILT) * 1.3 / Math.tan(halfV())); // 세로는 가까운 쪽이 원근으로 커져서 여유 1.3배
-const overviewDist = overviewFit(33);
+const overviewDist = overviewFit(33); // 목성형 행성(해왕성 궤도까지) 보기 = 처음 화면
 
 // 날아가기 3단계 — ① 두 천체가 함께 보일 만큼 물러나고 ② 옆으로 옮겨 가고 ③ 다가간다.
 // 단계마다 걸리는 시간은 거리 배율(로그)에 비례한다. 이미 충분히 멀면 ①은 0초.
@@ -832,8 +832,10 @@ function updateSky(placed = []) {
 // 오르트 구름은 공 모양이라 기울기와 상관없이 바깥 반지름이 들어오는 거리
 const fitSphere = rAU => w => rAU * AU_KM / Math.sin(Math.min(halfV(), halfH(w)));
 const VIEWS = [
-  { key: 'all', name: '태양계 전체', dist: overviewDist },
+  // 안쪽에서 바깥으로(확대 → 축소)
+  { key: 'terrestrial', name: '지구형 행성', dist: overviewFit(1.8) }, // 화성 궤도 원일점 1.67AU
   { key: 'belt', name: '소행성대', layer: 'belt', dist: overviewFit(5.6) },
+  { key: 'jovian', name: '목성형 행성', dist: overviewDist }, // 해왕성 원일점 30.3AU
   { key: 'kuiper', name: '카이퍼대', layer: 'kuiper', dist: overviewFit(55) },
   { key: 'oort', name: '오르트 구름', layer: 'oort', dist: fitSphere(OORT.rOut * 1.05) },
 ];
@@ -1869,10 +1871,10 @@ resize();
 // 글꼴이 늦게 뜨면 이름 너비가 달라지므로 다시 잰다
 document.fonts?.ready.then(() => { for (const b of bodies) b.nameW = 0; });
 
-// 처음 화면: 태양계 전체
+// 처음 화면: 목성형 행성 보기(해왕성 궤도까지 = 예전 「태양계 전체」)
 camera.position.copy(OVERVIEW_DIR).multiplyScalar(overviewDist());
 controls.minDistance = byKey.sun.reach * 1.15;
-state.view = 'all';
+state.view = 'jovian';
 updatePositions(julianDateTT(state.simMs));
 markFocus();
 applyAtmosphere();
