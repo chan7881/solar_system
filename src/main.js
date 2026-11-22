@@ -38,7 +38,7 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
 const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon', 'pluto', 'charon', 'io', 'europa', 'ganymede', 'callisto',
-  'mimas', 'enceladus', 'tethys', 'dione', 'rhea', 'iapetus']);
+  'mimas', 'enceladus', 'tethys', 'dione', 'rhea', 'iapetus', 'neptune', 'ceres', 'triton', 'miranda', 'ariel', 'umbriel', 'titania', 'oberon']);
 const texLoader = new THREE.TextureLoader();
 // 지도를 받아 질감으로 돌려준다(Promise). 받은 뒤에 재질에 넣는 것은 부르는 쪽이 한다.
 function loadTexture(url) {

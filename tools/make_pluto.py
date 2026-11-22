@@ -27,8 +27,8 @@ MIN_AREA = 0.01   # 이보다 작은 덩어리(전체의 1%)는 관측 없음 �
 FEATHER_DEG = 1.5 # 관측 경계를 이만큼(°) 부드럽게
 
 
-def fill(a):
-    """a: (H, W, C) float. 관측 없는 곳을 메운 사본과 메운 비율."""
+def empty_mask(a):
+    """a: (H, W, C) float. 관측 없는 곳(큰 검정 덩어리 + 그 안의 작은 관측 조각)."""
     H, W = a.shape[:2]
     dark = a.mean(2) < EMPTY
     # 관측 없음 = 어두운 곳 중 큰 덩어리(남쪽 극야 지역)만 — 관측된 어두운 무늬는 남긴다
@@ -39,6 +39,13 @@ def fill(a):
     lab, n = label(~empty)
     size = np.bincount(lab.ravel())
     empty |= np.isin(lab, [k for k in range(1, n + 1) if size[k] < MIN_AREA * H * W])
+    return empty
+
+
+def fill(a):
+    """a: (H, W, C) float. 관측 없는 곳을 메운 사본과 메운 비율."""
+    H = a.shape[0]
+    empty = empty_mask(a)
     mean = a[~empty].mean(0)
     # 경계만 부드럽게 — 관측 쪽은 그대로 두고, 빈 쪽만 가까운 관측 색(관측 화소만 흐린 값)에서 평균 색으로 옮겨 간다.
     # 빈 화소의 검정은 섞지 않는다(섞으면 경계를 따라 어두운 띠가 생긴다).
