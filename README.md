@@ -29,6 +29,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 고리 셰이더 식 정리(2026-11-22) — 셰이더 식(밝기·앞뒷면·토성 그림자·고리 그림자 몫·반사율)은 `src/rings_glsl.js` 한 곳, `tests/rings_glsl.test.mjs`가 그 GLSL 문자열을 JS로 옮겨(`tests/glsl_to_js.mjs` — 모르는 문법은 멈춤) `rings.js`와 무작위 입력·고리 경계·분점 문턱(1e-6)에서 대조. 셰이더 쪽 식만 틀리게 바꾼 변이 18개 모두 실패. 텍스처를 읽는 `ringTau`만 `main.js`에 남음. 화면은 고치기 전과 같은 그림(1200×800 세 장면, 화소 차 최대 3/255 한 곳). 테스트 319개 통과.
 지도 위도 기준 확인(2026-11-22) — 목성 PIA07782 설명문이 「행성 중심 위도로 같은 간격」이라 지금 방식(`ellipsoidGeometry`)과 맞음. 지도의 대적점 가운데도 남위 약 19.9°(행성 중심 위도 예상 19.6~20.0°, 측지 위도라면 22~22.5°).
 혜성 코마·꼬리·핵(2026-11-22, 화면 승인) — 핵 모양: 67P Rosetta DLR SHAP4S(그대로), 핼리 Stooke(Giotto·Vega 격자 → 부피 중심), 엔케·스위프트-터틀·헤일-밥은 추정 크기에 맞춘 근사 모양(`tools/make_comets.py`, 반지름은 부피 같은 구). 활동량은 물 승화 곡선(MSY 1973) × 관측 생산율(헤일-밥만 25AU까지 일산화탄소 항). 이온 꼬리는 태양풍 400km/s 광행차 방향의 곧은 꼬리, 먼지 꼬리는 알갱이 2,400개(나이 0~120일 × β 0.01~1, R2 수열)를 (1−β)GM 케플러 운동으로 옮김(떨어질 때 상태는 1일 칸 경계 + 에르미트 보간, 밝기 × √β). 코마는 1/ρ. 따로 모은 버퍼를 1−e^(−x)로 눌러 더하고, 머리가 화면을 채우면 노출을 줄임. 테스트 338개 통과(`tests/comets.test.mjs` 12개 — 변이 11개 모두 실패).
+갈릴레이 위성 지도·자세(2026-11-22, 화면 승인 전) — USGS Galileo SSI·Voyager 전구 모자이크(이오·가니메데 색, 유로파·칼리스토 흑백, `tools/make_galilean.py`). 라벨의 경도 규약이 지도마다 달라 지형으로 확인(이오 왼쪽 끝 −180°, 나머지 왼쪽 끝 0°), 극 둘레 빈 곳 3.6~4.3%는 주변 값으로 메움. 자세는 IAU 2015 + 목성계 주기 항 J3~J8 — Horizons 위치로 잰 태양 직하점 0.00002°·목성 쪽 점 0.0026°(광행차), 앱 위치로 재면 0.063°(`tests/galilean_rot.test.mjs`, 변이 8개 중 7개 실패 · J4 각속도 0.1°/세기는 0.001°라 못 가림). 화면 속 구의 태양 쪽 점이 모형과 0.001° 안(12건). 테스트 382개 통과.
 저장소 `chan7881/solar_system`(공개).
 
 ## 남은 일
@@ -47,13 +48,12 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 
 ### 3. 세부 묘사가 안 된 천체 목록 (업데이트 목록)
 
-지도·모양이 이미 있는 천체(수성·금성·지구·달·화성·포보스·데이모스·목성·토성·타이탄·명왕성·카론·혜성 5)는 뺐다. 남은 24개다. 소행성대·트로이군 등 점 무리는 점 표현을 유지하는 것이 설계이므로 뺐다.
+지도·모양이 이미 있는 천체(수성·금성·지구·달·화성·포보스·데이모스·목성·갈릴레이 위성 4·토성·타이탄·명왕성·카론·혜성 5)는 뺐다. 남은 20개다. 소행성대·트로이군 등 점 무리는 점 표현을 유지하는 것이 설계이므로 뺐다.
 
 | 분류 | 천체 | 지금 | 할 일 | 1차 자료 후보 |
 |---|---|---|---|---|
 | 태양 | 태양 | 단색 | 표면 지도(흑점·색) | NASA SDO·SOHO 영상(확인 필요) |
 | 행성 | 천왕성·해왕성 | 단색 | 실제에 가까운 색 확인, 줄무늬 필요 여부 결정 | Voyager 2 사진 |
-| 갈릴레이 위성 (4) | 이오·에우로파·가니메데·칼리스토 | 단색 | 표면 지도 | USGS Galileo 지도 |
 | 토성 위성 (7) | 미마스·엔셀라두스·테티스·디온·레아·히페리온·이아페투스 | 단색 | 표면 지도 | USGS·Cassini 자료 |
 | 천왕성 위성 (5) | 미란다·아리엘·움브리엘·티타니아·오베론 | 단색 | 표면 지도 | USGS Voyager 2 지도 |
 | 해왕성 위성 (1) | 트리톤 | 단색 | 표면 지도 | USGS Voyager 2 지도 |
@@ -90,8 +90,9 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `src/rings_glsl.js` | 고리 셰이더 식(GLSL 문자열) — `rings.js`와 같은 식. 스칼라 연산·vec 생성자·dot·length·.x/.y/.z만 써야 테스트가 JS로 옮겨 대조한다(벡터 사칙연산을 쓰면 테스트가 깨진다) |
 | `textures/` · `tools/make_textures.py` · `tools/make_saturn.py` · `tools/make_venus.py` · `tools/make_titan.py` | 표면 지도 2K JPG와 출처(`textures/출처.md`). 원본(수백 MB)은 git 밖 — 주소는 출처.md, 줄이기는 스크립트 |
 | `src/comets.js` · `tools/make_comets.py` | 혜성 활동량·이온 꼬리 방향·먼지 알갱이(케플러)·코마 크기 — 순수 함수(`tests/comets.test.mjs`), 화면은 `main.js` 「혜성 코마·꼬리」. 핵 모양 파일(원본 `원본/67p`·`원본/halley`, git 밖) |
+| `tools/make_galilean.py` | 갈릴레이 위성 지도(원본은 `원본/galilean/`, git 밖 · 주소는 `textures/출처.md` · 지도마다 왼쪽 끝 경도를 지형으로 확인한 값) |
 | `tools/make_pluto.py` | 명왕성·카론 지도(원본은 `원본/pluto/`, git 밖 · 주소는 `textures/출처.md`) |
-| `tests/` | `npm test` — 명왕성·카론 자세·마주 보는 점(`horizons_pluto_rot.txt`·`_vec.txt`) · — 포보스·데이모스 자세는 Horizons 직하점(`horizons_marsmoons_rot.txt`·`_vec.txt`), 모양은 부피·축·스티크니 자리(`shapes.test.mjs`) · 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 타이탄 자세는 Horizons 원판 가운데·태양 직하점(`horizons_titan_rot.txt`)과 Horizons 위치(`horizons_titan_vec.txt`) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
+| `tests/` | `npm test` — 갈릴레이 위성 자세(`horizons_galilean_rot.txt`·`_vec.txt`, 태양·목성 중심) · 명왕성·카론 자세·마주 보는 점(`horizons_pluto_rot.txt`·`_vec.txt`) · — 포보스·데이모스 자세는 Horizons 직하점(`horizons_marsmoons_rot.txt`·`_vec.txt`), 모양은 부피·축·스티크니 자리(`shapes.test.mjs`) · 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 타이탄 자세는 Horizons 원판 가운데·태양 직하점(`horizons_titan_rot.txt`)과 Horizons 위치(`horizons_titan_vec.txt`) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
 
 - 실행: 폴더에서 `python -m http.server 8731 --bind 127.0.0.1` → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)
 - 단위는 km, **초점 천체가 원점**. 위치는 JS 배정밀도로 계산해 그리기 직전에 초점 위치를 뺀다. 궤도선은 행성 기준 상대 좌표.
