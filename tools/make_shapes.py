@@ -1,9 +1,12 @@
-"""포보스·데이모스 모양 모형 → textures/<이름>_shape.bin
+"""포보스·데이모스·히페리온 모양 모형 → textures/<이름>_shape.bin
 
 원본(git 밖, 원본/phobos·원본/deimos — 주소는 textures/출처.md):
   포보스 PHOBOS_K275_DLR_V02.OBJ — Willner et al. 2014(DLR, Mars Express HRSC), 꼭짓점 13.7만 · 면 27.5만
   데이모스 DEIMOS_K005_THO_V02.OBJ — Thomas(Viking), 꼭짓점 2522 · 면 5040
   둘 다 IAU_PHOBOS / IAU_DEIMOS 천체 고정 좌표(km, x = 경도 0°, z = 북극).
+  히페리온 hyperion_30k_plt.tab — Thomas(Cassini ISS NAC), PDS SBN saturn_satellite_shape_models V1.0, 꼭짓점 14636 · 면 29268.
+    IAU 좌표계가 없다(혼돈 자전). z = 2005-09-26 가장 가까운 근접 비행 때 본 자전축(긴 축 쪽), 경도 0°는 Bahloo 충돌구를 서경 196°에
+    두는 옛 기준(Davies 1983) — 원본/hyperion/hyperion_document.pdf 「Coordinate System」.
 
 둘 다 가운데에서 정이십면체를 나눈 방향(꼭짓점 10242개)으로 빛살을 쏴 원본 면과 만나는 점을 꼭짓점으로 삼는다
 (가운데에서 보면 겉면이 한 겹 — 별 모양 — 인지 검사한다). 포보스는 너무 촘촘해서 줄이는 것이고, 데이모스는 원본이
@@ -34,6 +37,17 @@ def read_obj(path):
                 sys.exit(f'{path}: 삼각형이 아닌 면(꼭짓점 {len(p) - 1}개) — 나눠 읽는 기능이 없다')
             f.append([int(x.split('/')[0]) - 1 for x in p[1:4]])
     return np.array(v), np.array(f)
+
+
+def read_plt(path):
+    """PDS 판 모형(.tab): 첫 줄 꼭짓점 수·면 수, 이어서 x y z(km), 이어서 면마다 꼭짓점 번호 셋(0부터 — 2026-11-22 확인: 최소 0·최대 n−1)"""
+    lines = open(path).read().splitlines()
+    n, m = map(int, lines[0].split())
+    v = np.array([[float(x) for x in l.split()] for l in lines[1:1 + n]])
+    f = np.array([[int(x) for x in l.split()] for l in lines[1 + n:1 + n + m]])
+    if f.min() != 0 or f.max() != n - 1:
+        sys.exit(f'{path}: 면 번호 범위 {f.min()}~{f.max()} — 0부터 n−1이 아니다')
+    return v, f
 
 
 def icosphere_dirs(level):
@@ -96,7 +110,7 @@ def report(name, mesh):
 
 
 def build(name, obj):
-    v0, f0 = read_obj(ROOT / '원본' / name / obj)
+    v0, f0 = (read_plt if obj.endswith('.tab') else read_obj)(ROOT / '원본' / name / obj)
     full = trimesh.Trimesh(v0, f0, process=False)
     report(f'{name} 원본', full)
     v, f = resample(full, 5)
@@ -109,7 +123,8 @@ def build(name, obj):
 
 
 def main():
-    out = {n: build(n, o) for n, o in [('phobos', 'PHOBOS_K275_DLR_V02.OBJ'), ('deimos', 'DEIMOS_K005_THO_V02.OBJ')]}
+    out = {n: build(n, o) for n, o in [('phobos', 'PHOBOS_K275_DLR_V02.OBJ'), ('deimos', 'DEIMOS_K005_THO_V02.OBJ'),
+                                         ('hyperion', 'hyperion_30k_plt.tab')]}
     for n, (v, f) in out.items():
         write_bin(ROOT / 'textures' / f'{n}_shape.bin', v, f)
 

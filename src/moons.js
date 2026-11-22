@@ -27,6 +27,7 @@ export const MOONS = [
   { key: 'dione',     name: '디오네',   parent: 'saturn',  radius: 561.40,  gm: 73.11607,  color: 0xcfccc4 },
   { key: 'rhea',      name: '레아',     parent: 'saturn',  radius: 763.50,  gm: 153.94175, color: 0xc9c5bc },
   { key: 'titan',     name: '타이탄',   parent: 'saturn',  radius: 2574.76, gm: 8978.13710, color: 0xd59a4e },
+  { key: 'hyperion',  name: '히페리온', parent: 'saturn',  radius: 135.00,  gm: 0.37049,   color: 0x9c8b78 },
   { key: 'iapetus',   name: '이아페투스', parent: 'saturn', radius: 734.30, gm: 120.51511, color: 0xa39a8c },
   { key: 'miranda',   name: '미란다',   parent: 'uranus',  radius: 235.8,   gm: 4.3,       color: 0xa9a7a3 },
   { key: 'ariel',     name: '아리엘',   parent: 'uranus',  radius: 578.9,   gm: 83.5,      color: 0xb4b1ab },

@@ -50,6 +50,18 @@ test('포보스: 스티크니 쪽(동경 311°, 적도)이 타원체보다 움�
   assert.ok(m < 0.4, `거울 쪽 ${m.toFixed(2)}km`);
 });
 
+// 히페리온(Thomas, Cassini ISS) — 천체 고정 z는 2005-09-26 근접 비행 때의 자전축이고 긴 축 쪽이다(원본 설명서 · Thomas 2007 반지름 180×133×103km).
+//   몸체 좌표로 바꾸면 긴 축이 +Y(북극)로 가야 한다 — 바꿈 (x,y,z)→(x,z,−y)를 틀리면 긴 축이 X나 Z로 간다.
+test('히페리온: 바깥 감기, 부피 같은 구 반지름이 JPL 평균 반지름 135±4km 안, 긴 축(반폭 170km)이 몸체 +Y', () => {
+  const s = load('hyperion'), p = s.positions;
+  const v = shapeVolume(s), r = Math.cbrt(3 * v / 4 / Math.PI);
+  assert.ok(v > 0 && Math.abs(r - MOONS.find(m => m.key === 'hyperion').radius) < 4, `${r.toFixed(2)}km`);
+  const half = [0, 1, 2].map(ax => { let lo = Infinity, hi = -Infinity; for (let i = ax; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]); } return (hi - lo) / 2; });
+  assert.ok(half[1] > 160 && half[0] < 140 && half[2] < 140, half.map(x => x.toFixed(1)).join(' '));
+  let far = 0; for (let i = 0; i < p.length; i += 3) far = Math.max(far, Math.hypot(p[i], p[i + 1], p[i + 2]));
+  assert.ok(SHAPE_REACH.hyperion >= far && SHAPE_REACH.hyperion - far < 0.02, `${SHAPE_REACH.hyperion} 대 ${far.toFixed(3)}`);
+});
+
 // 혜성 핵(tools/make_comets.py) — 부피 같은 구 반지름이 COMETS radius와, 가장 먼 점이 SHAPE_REACH와 맞는다
 import { COMETS } from '../src/smallbodies.js';
 for (const c of COMETS) {

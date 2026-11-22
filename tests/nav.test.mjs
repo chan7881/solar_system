@@ -14,7 +14,7 @@ test('행성은 공전 순서, 위성은 모행성 아래에만 들어간다', (
   assert.equal(g.sun.key, 'sun');
   assert.deepEqual(g.planets.map(e => e.body.key), ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune']);
   const n = Object.fromEntries(g.planets.map(e => [e.body.key, e.moons.length]));
-  assert.deepEqual(n, { mercury: 0, venus: 0, earth: 1, mars: 2, jupiter: 4, saturn: 7, uranus: 5, neptune: 1 });
+  assert.deepEqual(n, { mercury: 0, venus: 0, earth: 1, mars: 2, jupiter: 4, saturn: 8, uranus: 5, neptune: 1 });
   for (const e of g.planets) for (const m of e.moons) assert.equal(m.parent, e.body.key);
   // 모든 천체가 정확히 한 번씩 나온다
   const seen = [g.sun.key, ...g.planets.flatMap(e => [e.body.key, ...e.moons.map(m => m.key)])];

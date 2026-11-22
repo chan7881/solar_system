@@ -3,11 +3,12 @@
 // 몸체 좌표(구와 같은 약속 — src/main.js orient): +X = 경도 0°, +Y = 북극, −Z = 동경 90° → (x, y, z) ↦ (x, z, −y)
 //   이 바꿈은 회전(행렬식 +1)이라 면의 감는 방향(바깥에서 반시계)이 그대로다.
 
-export const SHAPED = new Set(['phobos', 'deimos', 'halley', 'churyumov', 'encke', 'swifttuttle', 'halebopp']);
+export const SHAPED = new Set(['phobos', 'deimos', 'hyperion', 'halley', 'churyumov', 'encke', 'swifttuttle', 'halebopp']);
 // 가운데에서 겉면의 가장 먼 점까지(km) — 카메라 근접 한계·이름표 가림·화면 크기는 평균 반지름이 아니라 이것으로 잰다.
 // 파일을 받기 전에도 맞도록 상수로 둔다(tests/shapes.test.mjs가 파일의 최대 반지름과 대조). 2026-11-21 실측 13.928 · 8.671,
+// 히페리온 2026-11-22 실측 184.536,
 // 혜성(tools/make_comets.py) 2026-11-22 실측 핼리 8.423 · 67P 2.649 · 엔케 3.078 · 스위프트-터틀 15.808 · 헤일-밥 36.486
-export const SHAPE_REACH = { phobos: 13.93, deimos: 8.68, halley: 8.43, churyumov: 2.65, encke: 3.08, swifttuttle: 15.81, halebopp: 36.49 };
+export const SHAPE_REACH = { phobos: 13.93, deimos: 8.68, hyperion: 184.54, halley: 8.43, churyumov: 2.65, encke: 3.08, swifttuttle: 15.81, halebopp: 36.49 };
 
 export function parseShape(buffer) {
   const dv = new DataView(buffer);

@@ -8,7 +8,7 @@
  4. a는 위치 반지름에 맞춘다(행성 편평도 때문에 순간 a와 실제 궤도 반지름이 조금 다르다).
  5. 간격 절반만큼 민 표본(<id>_check.txt)으로 오차를 잰다 — 맞출 때 안 쓴 자료.
 
-실행: python tools/fit_moons.py   (출력: src/moon_fits.js, 오차 요약은 화면에)
+실행: python tools/fit_moons.py [위성 ID …]   (출력: src/moon_fits.js, 오차 요약은 화면에 · ID를 주면 그 위성만 다시 맞추고 나머지는 지금 파일 그대로)
 """
 import json
 from pathlib import Path
@@ -23,9 +23,14 @@ OBL = np.radians(84381.448 / 3600)
 GM = {499: 42828.37, 599: 126686531.9 + 26229.7, 699: 37931206.2 + 9376, 799: 5793951.3 + 605, 899: 6835099.5 + 1428.5, 999: 869.3 + 106.1}
 MOONS = {401: ('phobos', 499), 402: ('deimos', 499), 501: ('io', 599), 502: ('europa', 599), 503: ('ganymede', 599),
          504: ('callisto', 599), 601: ('mimas', 699), 602: ('enceladus', 699), 603: ('tethys', 699), 604: ('dione', 699),
-         605: ('rhea', 699), 606: ('titan', 699), 608: ('iapetus', 699), 701: ('ariel', 799), 702: ('umbriel', 799),
+         605: ('rhea', 699), 606: ('titan', 699), 607: ('hyperion', 699), 608: ('iapetus', 699), 701: ('ariel', 799), 702: ('umbriel', 799),
          703: ('titania', 799), 704: ('oberon', 799), 705: ('miranda', 799), 801: ('triton', 899), 901: ('charon', 999)}
 N_L, N_K, N_H = 8, 5, 5  # 주기항 최대 개수
+# 위성마다 다르게 둘 것: 주기항 개수 · K(이심률 벡터)를 직접 주기 분석으로 찾을지.
+#   히페리온은 타이탄과 4:3 공명이라 근점 세차 속도가 흔들려(약 −7000일 둘레에 옆띠 여럿) FFT 봉우리 + 3% 규칙으로는 2항에서 멈춘다
+#   (따로 둔 자료 최대 3.2°, 2026-11-22) — 고른 격자 없이 자료에 직접 투영해 찾고 3% 규칙 없이 정한 개수까지 더한다.
+TERMS = {607: (8, 15, 5)}
+DIRECT_K = {607}
 TOL = np.radians(0.01)  # 잔차가 이보다 작으면 그만(평균 황경 0.01° · 이심률·기울기 벡터도 같은 크기의 위치 오차)
 
 
@@ -129,8 +134,20 @@ def fit_real(t, y, base_cols, nterms, fmax, tol):
     return freqs, c, res
 
 
-def fit_complex(t, z, nterms, fmax, tol):
-    """z ≈ Σ C exp(i f t) (상수항 f=0 포함)."""
+def direct_freq(t, y, fmax, exclude):
+    """잔차를 exp(−i f t)에 직접 투영한 크기가 가장 큰 f(|f| < fmax, 분해능의 1/4 간격) — 자료 5개에 하나만 써서 빠르게.
+    히페리온 K의 항은 다 주기 125일보다 길다(2026-11-22 시험) — fmax는 0.05rad/일로 부른다"""
+    lo = RES(t)
+    grid = np.arange(-fmax, fmax, lo / 4)
+    for g in exclude:
+        grid = grid[np.abs(grid - g) > 0.75 * lo]
+    ts, ys = t[::5], y[::5]
+    P = np.concatenate([np.abs(np.exp(-1j * np.outer(grid[k:k + 2000], ts)) @ ys) for k in range(0, len(grid), 2000)])
+    return grid[P.argmax()]
+
+
+def fit_complex(t, z, nterms, fmax, tol, direct=False):
+    """z ≈ Σ C exp(i f t) (상수항 f=0 포함). direct: 직접 투영으로 찾고 3% 규칙 없이 nterms까지."""
     freqs = [0.0]
     def solve(fr):
         A = np.exp(1j * np.outer(t, fr))
@@ -153,10 +170,10 @@ def fit_complex(t, z, nterms, fmax, tol):
     for _ in range(nterms):
         if np.sqrt(np.mean(np.abs(res) ** 2)) < tol:
             break
-        f = best_freq(t, res, fmax, complex_=True, exclude=freqs)
+        f = direct_freq(t, res, min(fmax, 0.05), freqs) if direct else best_freq(t, res, fmax, complex_=True, exclude=freqs)
         trial = freqs + [f]
         c2, res2 = solve(trial)
-        if np.linalg.norm(res2) > 0.97 * np.linalg.norm(res):
+        if not direct and np.linalg.norm(res2) > 0.97 * np.linalg.norm(res):
             break
         freqs, c, res = trial, c2, res2
     if len(freqs) > 1:
@@ -216,11 +233,12 @@ def fit_one(mid, center):
     n1 = np.polyfit(t, L, 1)[0]
     L = unwrap_L(t, o['L'], n1)
     tau = t / 36525
-    Lf, Lc, Lres = fit_real(t, L, [np.ones_like(t), tau, tau * tau], N_L, fmax, TOL)
+    nL, nK, nH = TERMS.get(mid, (N_L, N_K, N_H))
+    Lf, Lc, Lres = fit_real(t, L, [np.ones_like(t), tau, tau * tau], nL, fmax, TOL)
     K = o['e'] * np.exp(1j * o['varpi'])
-    Kf, Kc, _ = fit_complex(t, K, N_K, fmax, TOL)
+    Kf, Kc, _ = fit_complex(t, K, nK, fmax, TOL, direct=mid in DIRECT_K)
     H = np.sin(o['inc']) * np.exp(1j * o['node'])
-    Hf, Hc, _ = fit_complex(t, H, N_H, fmax, TOL)
+    Hf, Hc, _ = fit_complex(t, H, nH, fmax, TOL)
     model = dict(frame=F.tolist(), a=1.0, L0=Lc[0], n=Lc[1] / 36525, c2=Lc[2] / 36525 ** 2,
                  Lterms=[[f, Lc[3 + 2 * k], Lc[4 + 2 * k]] for k, f in enumerate(Lf)],
                  Kterms=[[f, c.real, c.imag] for f, c in zip(Kf, Kc)],
@@ -239,8 +257,15 @@ def fit_one(mid, center):
 
 
 def main():
+    import sys
+    only = [int(a) for a in sys.argv[1:]]
     out = {}
+    if only:  # 지금 파일의 나머지 위성은 그대로 두고 고른 것만 바꾼다
+        old = (ROOT / 'src' / 'moon_fits.js').read_text(encoding='utf-8')
+        out = json.loads(old[old.index('export default ') + 15:old.rindex(';')])
     for mid, (key, center) in MOONS.items():
+        if only and mid not in only:
+            continue
         model, s = fit_one(mid, center)
         out[key] = model
         print(f"{key:10s} 맞춘 자료 최대 {s['fit_max']:.3f}° · 따로 둔 자료 RMS {s['check_rms']:.3f}° 최대 {s['check_max']:.3f}° "
