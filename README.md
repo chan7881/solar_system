@@ -89,7 +89,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `tests/` | `npm test` — 토성 위성 자세(`horizons_saturnmoons_rot.txt`·`_vec.txt`, 태양·토성 중심) · 갈릴레이 위성 자세(`horizons_galilean_rot.txt`·`_vec.txt`, 태양·목성 중심) · 명왕성·카론 자세·마주 보는 점(`horizons_pluto_rot.txt`·`_vec.txt`) · — 포보스·데이모스 자세는 Horizons 직하점(`horizons_marsmoons_rot.txt`·`_vec.txt`), 모양은 부피·축·스티크니 자리(`shapes.test.mjs`) · 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 타이탄 자세는 Horizons 원판 가운데·태양 직하점(`horizons_titan_rot.txt`)과 Horizons 위치(`horizons_titan_vec.txt`) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
 
 - **카메라가 늘 원점을 보는 것은 아니다** — 궤도 보기가 `controls.target`(바라보는 점)과 `camera.up`을 옮긴다. 거리는 `camera.position.distanceTo(controls.target)`으로 잰다. `camera.up`을 바꾸면 OrbitControls의 `_quat`도 함께 고친다(`setUp`).
-- 실행: 폴더에서 `python -m http.server 8731 --bind 127.0.0.1` → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)
+- 실행: 폴더에서 `python serve.py`(캐시를 꺼서 브라우저가 옛 모듈을 붙잡지 않는다) → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)
 - 단위는 km, **초점 천체가 원점**. 위치는 JS 배정밀도로 계산해 그리기 직전에 초점 위치를 뺀다. 궤도선은 행성 기준 상대 좌표.
 - 자동 확인용 `window.__app`(state · step · draw · flyTo · camera · bodies).
 
