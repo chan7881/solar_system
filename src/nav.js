@@ -71,6 +71,7 @@ export const LAYERS = [
   { key: 'labels', name: '이름표', on: true },
   { key: 'icons', name: '아이콘', on: true },
   { key: 'nightLights', name: '지구 밤 불빛', on: true },
+  { key: 'sunFlare', name: '태양 렌즈 효과', on: true },
 ];
 export const defaultLayers = () => Object.fromEntries(LAYERS.map(l => [l.key, l.on]));
 

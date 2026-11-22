@@ -10,6 +10,7 @@ import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, L
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
 import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples, stateFrom } from './comets.js';
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
+import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter } from './orbit.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
@@ -900,7 +901,7 @@ legend.innerHTML = [...GROUP_NAMES.map((n, i) => [n, GROUP_COLORS[i]]), ['오르
   for (const k of ['belt', 'kuiper', 'oort']) lyList.appendChild(layerItem(k));
   lyList.append(layerItem('groupColors', true), legend); // 무리 전체(소행성대~오르트 구름)에 걸리는 색 구분
   sec('표시');
-  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights']) lyList.appendChild(layerItem(k));
+  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights', 'sunFlare']) lyList.appendChild(layerItem(k));
 }
 function setLayers(patch) {
   Object.assign(state.layers, patch);
@@ -1525,6 +1526,104 @@ function drawGlow() {
   renderer.render(glowQuadScene, glowCam);
   renderer.autoClear = ac;
 }
+// ---------- 태양 렌즈 효과 ----------
+// 본 장면 위에 화면 겹침으로 더한다(가산). 식·표는 src/flare.js.
+// 후광(블룸)은 원반 크기를 따라 커지고 늘 켜 둔다(노출 × 보이는 비율). 회절 광선은 쓰지 않는다. 넘친 핵·유령·베일은 화면 높이 기준 크기이고
+// 원반이 화면을 채우면 줄인다. 가림은 깊이 버퍼가 아니라 몸체 타원체에 선분을 쏘아 낸다(GPU에서 읽어 오면 멈칫해서) — 고리·혜성 꼬리는 가리지 않는다
+const flareU = {
+  uSun: { value: new THREE.Vector2() }, uH: { value: 1 }, uRs: { value: 0 },
+  uGain: { value: 0 }, uGhostGain: { value: 0 }, uBloom: { value: 0 }, uSig: { value: BLOOM.map(() => 1) },
+  uG: { value: GHOSTS.map(() => new THREE.Vector4()) }, uGC: { value: GHOSTS.map(g => new THREE.Vector3(...g.color)) },
+};
+const v3 = a => `vec3(${a.map(x => x.toFixed(3)).join(', ')})`;
+const flareQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: flareU,
+  vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: /* glsl */`
+    #include <common>
+    #define NG ${GHOSTS.length}
+    uniform vec2 uSun; uniform float uH, uRs, uGain, uGhostGain, uBloom; uniform float uSig[${BLOOM.length}];
+    uniform vec4 uG[NG]; uniform vec3 uGC[NG];
+    void main() {
+      vec2 d = gl_FragCoord.xy - uSun;
+      float rho = length(d);
+      float e = max(rho - uRs, 0.0);   // 원반 가장자리 밖 거리(px) — 원반 안은 0
+      float r = e / uH;
+      // 후광(블룸): 원반 크기 + 화면 높이에 비례하는 네 겹(flare.js BLOOM·bloomScales) — 바깥 겹이 광선 자리를 덮는다
+      vec3 bloom = ${BLOOM.map((g, i) => `${g.k.toFixed(3)} * exp(-e / uSig[${i}]) * ${v3(g.color)}`).join(' + ')};
+      // 넘친 핵(하얗게 찬 둥근 자리) · 베일 글레어(태양 둘레 넓은 연자줏빛 안개, 화면 전체)
+      float core = 5.0 * exp(-(r * r) / (0.032 * 0.032));
+      vec3 veil = vec3(0.09, 0.045, 0.13) * exp(-r / 0.1) + vec3(0.04, 0.026, 0.06) * exp(-r / 0.35) + vec3(0.004, 0.003, 0.006); // 핵 둘레 자줏빛 + 넓은 안개 + 바닥
+      vec3 x = uBloom * bloom + uGain * (vec3(1.0, 0.98, 0.95) * core + veil);
+      // 렌즈 유령: 속이 옅게 찬 원반 + 밝은 가장자리 고리(색마다 반지름이 조금 다른 무지갯빛)
+      for (int i = 0; i < NG; i++) {
+        float q = length(gl_FragCoord.xy - uG[i].xy) / uG[i].z;
+        float disk = 1.0 - smoothstep(0.88, 1.0, q);
+        vec3 qq = vec3(q - 0.96, q - 0.93, q - 0.90);
+        vec3 rim = exp(-qq * qq / (0.04 * 0.04));
+        x += uGhostGain * uG[i].w * uGC[i] * (0.35 * disk * (0.4 + 0.6 * q * q) + 0.45 * rim);
+      }
+      gl_FragColor = vec4(1.0 - exp(-x), 1.0);
+      #include <colorspace_fragment>
+    }`,
+  depthTest: false, depthWrite: false, transparent: true, blending: THREE.AdditiveBlending,
+}));
+flareQuad.frustumCulled = false;
+const flareScene = new THREE.Scene().add(flareQuad);
+const _fv = new THREE.Vector3(), _fs = new THREE.Vector2();
+function occluders() {
+  const list = [];
+  for (const b of bodies) {
+    if (b.key === 'sun' || !b.mesh.visible) continue;
+    const radii = SHAPED.has(b.key) ? [b.reach, b.reach, b.reach]
+      : b.abc ? [b.abc[0], b.abc[2], b.abc[1]] : b.parent ? [b.radius, b.radius, b.radius] : [b.re, b.rp, b.re];
+    const p = b.mesh.position, q = b.mesh.quaternion;
+    list.push({ c: [p.x, p.y, p.z], radii, q: [q.x, q.y, q.z, q.w] });
+  }
+  return list;
+}
+// 지금 화면의 렌즈 효과 값(자동 확인용으로도 쓴다)
+const _fr = new THREE.Vector3();
+function flareState() {
+  const sun = byKey.sun;
+  renderer.getDrawingBufferSize(_fs);
+  const W = _fs.x, H = _fs.y, pr = renderer.getPixelRatio(), Hv = viewH * pr; // 크기 기준은 조작부 위 보이는 높이
+  camera.updateMatrixWorld();
+  const P = camera.projectionMatrix.elements;
+  _fv.copy(sun.mesh.position).applyMatrix4(camera.matrixWorldInverse);
+  const p = flareScreen([_fv.x, _fv.y, _fv.z], P, W, H);
+  const c = flareScreen([0, 0, -1], P, W, H); // 광학 중심
+  const cam = camera.position, sp = sun.mesh.position;
+  const dist = cam.distanceTo(sp);
+  // 원반 반지름(px): 시선에 수직인 방향으로 각반지름만큼 비킨 점을 투영한 거리
+  let rs = 0;
+  if (p && dist > sun.reach) {
+    _fr.set(-_fv.z, 0, _fv.x).normalize().multiplyScalar(_fv.length() * Math.tan(Math.asin(sun.reach / dist))).add(_fv);
+    const q = flareScreen([_fr.x, _fr.y, _fr.z], P, W, H);
+    rs = q ? Math.hypot(q[0] - p[0], q[1] - p[1]) : 0;
+  }
+  const vis = p ? visibleFraction([cam.x, cam.y, cam.z], [sp.x, sp.y, sp.z], sun.reach, occluders()) : 0;
+  const gain = flareGain(p, W, H, dist, sun.reach, camera.fov, vis, rs);
+  const bloom = bloomGain(p, W, H, dist, sun.reach, vis, rs);
+  return { p, c, W, H, Hv, rs, vis, gain, bloom };
+}
+function drawFlare() {
+  if (!state.layers.sunFlare || state.tool) return;
+  const f = flareState();
+  if (!(f.gain > 0.002 || f.bloom > 0.002)) return;
+  flareU.uSun.value.set(f.p[0], f.H - f.p[1]);
+  flareU.uH.value = f.Hv;
+  flareU.uRs.value = f.rs;
+  flareU.uGain.value = f.gain;
+  flareU.uGhostGain.value = 0.35 * f.gain;
+  flareU.uBloom.value = f.bloom;
+  flareU.uSig.value = bloomScales(f.rs, f.Hv);
+  ghosts(f.p, f.c, f.Hv).forEach((g, i) => flareU.uG.value[i].set(g.x, f.H - g.y, g.r, g.a));
+  const ac = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.render(flareScene, glowCam);
+  renderer.autoClear = ac;
+}
 const comets = COMETS.map(c => {
   const b = byKey[c.key];
   const dust = new THREE.Points(new THREE.BufferGeometry(), glowMat(0xffdca0, 0.5));
@@ -1660,7 +1759,7 @@ function step(now = performance.now()) {
 
 function draw() {
   if (state.tool === 'size') drawCompare();
-  else { renderer.render(scene, camera); drawGlow(); }
+  else { renderer.render(scene, camera); drawGlow(); drawFlare(); }
 }
 
 // 무대 크기에 맞추고, 화면 중심을 조작부 위 보이는 영역의 가운데로 옮긴다(세로 화각 45°도 그 영역 기준)
@@ -1705,4 +1804,4 @@ booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };
+window.__app = { flareState, controls, comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };
