@@ -37,7 +37,8 @@ scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
-const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon', 'pluto', 'charon', 'io', 'europa', 'ganymede', 'callisto']);
+const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon', 'pluto', 'charon', 'io', 'europa', 'ganymede', 'callisto',
+  'mimas', 'enceladus', 'tethys', 'dione', 'rhea', 'iapetus']);
 const texLoader = new THREE.TextureLoader();
 // 지도를 받아 질감으로 돌려준다(Promise). 받은 뒤에 재질에 넣는 것은 부르는 쪽이 한다.
 function loadTexture(url) {
@@ -79,7 +80,7 @@ function ellipsoidGeometry(re, rp) {
 // 타이탄: Cassini ISS 근적외선(938nm) 모자이크(흑백 — 연무를 뚫는 파장으로 본 밝기, 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·갈릴레이 위성·타이탄·포보스·데이모스·카론). 나머지는 단색이라 돌려도 보이지 않는다
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·갈릴레이 위성·토성 위성·포보스·데이모스·카론 — 히페리온은 모형이 없다). 나머지는 단색이라 돌려도 보이지 않는다
 // 포보스·데이모스·혜성 핵은 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
 function loadShape(b) {
   fetch(`textures/${b.key}_shape.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
