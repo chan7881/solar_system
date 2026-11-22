@@ -8,7 +8,8 @@ import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
 import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples, stateFrom } from './comets.js';
-import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText } from './tools.js';
+import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
+import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter } from './orbit.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
 const TRAIL_N = 360;
@@ -313,9 +314,17 @@ const overviewDist = overviewFit(33);
 
 // 날아가기 3단계 — ① 두 천체가 함께 보일 만큼 물러나고 ② 옆으로 옮겨 가고 ③ 다가간다.
 // 단계마다 걸리는 시간은 거리 배율(로그)에 비례한다. 이미 충분히 멀면 ①은 0초.
+// opts.target: 바라보는 점(초점 천체 기준, 기본 원점) · opts.up: 화면 위쪽(기본 황도 북극 +Y) — 궤도 보기가 쓴다.
+// 다른 곳으로 날아가면 둘 다 기본으로 돌아온다
+const Y_UP = new THREE.Vector3(0, 1, 0), ORIGIN = new THREE.Vector3();
+function setUp(v) {
+  camera.up.copy(v);
+  controls._quat.setFromUnitVectors(camera.up, Y_UP); // OrbitControls는 만들 때의 up만 기억한다 — 바꾸면 함께 고친다
+  controls._quatInverse.copy(controls._quat).invert();
+}
 function flyTo(key, opts = {}) {
   // 날아가는 중에 누르면 도착한 뒤에 이어서 간다(중간 위치에서 튀지 않게)
-  if (state.fly) { state.fly.next = key === state.fly.to && !opts.view ? null : { key, opts }; return; }
+  if (state.fly) { state.fly.next = key === state.fly.to && !opts.view && !opts.target ? null : { key, opts }; return; }
   // 손으로 돌리다 남은 관성을 먼저 털어 낸다 — 남겨 두면 도착한 뒤에 화면이 저절로 돈다
   const damping = controls.enableDamping;
   controls.enableDamping = false;
@@ -327,16 +336,25 @@ function flyTo(key, opts = {}) {
   markFocus();
   // 사이드바를 여닫는 중이면 무대 폭이 바뀌는 중이다 — 거리는 전환이 끝난 뒤의 폭으로 잰다
   const fw = finalStageW();
-  const d0 = camera.position.length();
+  const tg0 = controls.target.clone(), tg1 = opts.target ? opts.target.clone() : ORIGIN.clone();
+  const up0 = camera.up.clone(), up1 = opts.up ? opts.up.clone().normalize() : Y_UP.clone();
+  const d0 = camera.position.distanceTo(tg0);
   const d1 = opts.dist?.(fw) ?? viewDist(byKey[key], fw);
   const gap = Math.hypot(...byKey[key].pos.map((v, i) => v - byKey[from].pos[i]));
   const D = Math.max(d0, d1, (gap / Math.tan(Math.min(halfV(), halfH(fw)))) * 1.3);
   const w = [Math.log(D / d0), gap > 0 ? 2 : 0, Math.log(D / d1)];
   const total = w[0] + w[1] + w[2] || 1;
   const dur = Math.min(3600, 900 + 260 * total);
-  const dir0 = camera.position.clone().normalize();
+  const dir0 = camera.position.clone().sub(tg0).normalize();
   const dir1 = opts.dir ? opts.dir.clone().normalize() : dir0.clone();
-  state.fly = { from, to: key, t0: performance.now(), dur, d0, d1, D, cut: [w[0] / total, (w[0] + w[1]) / total], dir0, dir1 };
+  // 궤도 보기처럼 황도 극 가까이에서 내려다보다 떠나면 시선이 돌아올 up(+Y)과 거의 나란해 lookAt이 휘청인다 —
+  // 지금 화면 위쪽의 반대편으로 눕혀 60° 높이에서 보게 한다(화면 방향이 이어지게)
+  if (!opts.dir && Math.abs(dir1.dot(up1)) > 0.95) {
+    const h = up0.clone().addScaledVector(up1, -up0.dot(up1)).negate();
+    if (h.lengthSq() < 1e-6) h.set(0, 0, 1);
+    dir1.copy(up1).multiplyScalar(Math.sin(Math.PI / 3) * Math.sign(dir1.dot(up1))).addScaledVector(h.normalize(), Math.cos(Math.PI / 3)).normalize();
+  }
+  state.fly = { from, to: key, t0: performance.now(), dur, d0, d1, D, cut: [w[0] / total, (w[0] + w[1]) / total], dir0, dir1, tg0, tg1, up0, up1 };
   controls.enabled = false;
   updateAtmoButton();
   if (!state.atmosphere) applyAtmosphere(); // 대기를 끈 채로 왔으면 새 초점의 지도를 받기 시작
@@ -357,11 +375,16 @@ function focusPosition(now) {
   const dir = f.dir0.clone().lerp(f.dir1, ease(s));
   if (dir.lengthSq() < 1e-6) dir.copy(f.dir1); // 정반대 방향일 때 0 벡터 방지
   dir.normalize();
-  camera.position.copy(dir.multiplyScalar(d));
+  const es = ease(s);
+  controls.target.lerpVectors(f.tg0, f.tg1, es);
+  camera.position.copy(dir.multiplyScalar(d)).add(controls.target);
+  const up = f.up0.clone().lerp(f.up1, es);
+  setUp(up.lengthSq() < 1e-6 ? f.up1 : up.normalize()); // 뒤집힌 방향끼리면 중간이 0 — 도착 방향으로
   if (s >= 1) {
     state.fly = null;
+    setUp(f.up1);
     controls.enabled = true;
-    controls.minDistance = byKey[state.focus].reach * 1.15;
+    controls.minDistance = byKey[state.focus].reach * 1.15 + controls.target.length();
     updateAtmoButton();
     if (f.next) flyTo(f.next.key, f.next.opts);
   }
@@ -889,7 +912,7 @@ function updateClock() {
 
 // ---------- 도구: 거리 재기 · 크기 비교 ----------
 // 고르는 목록 — 사이드바와 같은 순서(태양 · 행성 · 위성 · 왜행성 · 혜성). 위성은 모천체 이름을 붙인다
-function fillPicker(sel) {
+function fillPicker(sel, withSun = true) {
   const g = navGroups(bodies);
   const add = (label, list) => {
     if (!list.length) return;
@@ -902,7 +925,7 @@ function fillPicker(sel) {
     }
     sel.appendChild(og);
   };
-  add('태양', [g.sun]);
+  if (withSun) add('태양', [g.sun]);
   add('행성', g.planets.map(e => e.body));
   add('위성', [...g.planets, ...g.dwarfs, ...g.comets, ...g.other].flatMap(e => e.moons));
   add('왜행성', g.dwarfs.map(e => e.body));
@@ -911,8 +934,11 @@ function fillPicker(sel) {
 }
 const distEl = document.getElementById('dist');
 const compareEl = document.getElementById('compare');
-const distBtn = document.getElementById('tool-dist');
-const sizeBtn = document.getElementById('tool-size');
+const orbitEl = document.getElementById('orbit');
+const toolBtn = document.getElementById('tool-btn');
+const toolMenu = document.getElementById('tool-menu');
+const toolItems = [...toolMenu.querySelectorAll('[data-tool]')];
+const TOOL_NAMES = { dist: '거리 재기', size: '크기 비교', orbit: '궤도 보기' };
 const pickers = {
   dist: [document.getElementById('dist-a'), document.getElementById('dist-b')],
   size: [document.getElementById('cmp-a'), document.getElementById('cmp-b')],
@@ -929,16 +955,26 @@ for (const [tool, sels] of Object.entries(pickers)) {
     });
   });
 }
-// 도구를 열 때마다 「지구 · 지금 보는 천체」로 시작한다
+// 도구를 열 때마다 「지구 · 지금 보는 천체」로 시작한다(궤도 보기는 지금 보는 천체, 태양이면 지구)
 function setTool(t) {
+  setToolMenu(false);
   state.tool = t;
-  if (t) {
+  if (t && NARROW.matches) { setSidebar(false); setLayerPanel(false); } // 폰에서는 한쪽만 연다
+  if (t === 'orbit') {
+    orbitEl.hidden = false; // 카드 높이를 재려면 먼저 보여야 한다(goOrbit)
+    state.orbitKey = state.focus === 'sun' ? 'earth' : state.focus;
+    orbitSel.value = state.orbitKey;
+    lastOrbit = '';
+    goOrbit();
+  } else if (t) {
     state.pair[t] = defaultPair(state.focus);
     pickers[t].forEach((sel, i) => { sel.value = state.pair[t][i]; });
-    if (NARROW.matches) { setSidebar(false); setLayerPanel(false); } // 폰에서는 한쪽만 연다
   }
+  orbitEl.hidden = t !== 'orbit';
   distEl.hidden = t !== 'dist';
-  distBtn.setAttribute('aria-pressed', String(t === 'dist'));
+  toolBtn.setAttribute('aria-pressed', String(!!t));
+  document.getElementById('tool-name').textContent = t ? TOOL_NAMES[t] : '도구';
+  for (const it of toolItems) it.setAttribute('aria-checked', String(it.dataset.tool === t));
   compareEl.hidden = t !== 'size';
   document.body.classList.toggle('cmp-open', t === 'size');
   lastDist = '';
@@ -946,14 +982,35 @@ function setTool(t) {
   if (t === 'size') buildCompare();
   if (booted) draw();
 }
-distBtn.addEventListener('click', () => setTool(state.tool === 'dist' ? null : 'dist'));
-sizeBtn.addEventListener('click', () => setTool('size'));
+// 「도구」 단추: 쓰는 도구가 있으면 끄고, 없으면 목록을 펼친다. 목록 밖을 누르거나 Esc면 접는다
+function setToolMenu(open) {
+  toolMenu.hidden = !open;
+  toolBtn.setAttribute('aria-expanded', String(open));
+  if (open) toolItems[0].focus();
+}
+toolMenu.addEventListener('keydown', e => {
+  const i = toolItems.indexOf(document.activeElement), n = toolItems.length;
+  const go = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: n - 1 }[e.key];
+  if (go === undefined) return;
+  e.preventDefault();
+  toolItems[(go + n) % n].focus();
+});
+toolBtn.addEventListener('click', () => {
+  if (state.tool) setTool(null);
+  else setToolMenu(toolMenu.hidden);
+});
+for (const it of toolItems) it.addEventListener('click', () => setTool(it.dataset.tool));
+document.addEventListener('pointerdown', e => { if (!toolMenu.hidden && !e.target.closest('#tools')) setToolMenu(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !toolMenu.hidden) { setToolMenu(false); toolBtn.focus(); } });
 for (const b of document.querySelectorAll('.tc-close')) b.addEventListener('click', () => setTool(null));
 const distOn = () => state.tool === 'dist' && state.layers.ui; // 사용자 화면을 끄면 창과 함께 선·글자도 감춘다(닫기 단추가 없어지므로)
-const toolShows = key => distOn() && state.pair.dist.includes(key); // 고른 천체는 레이어를 꺼 두었어도 보인다
+const orbitOn = () => state.tool === 'orbit' && state.layers.ui;
+// 고른 천체는 레이어를 꺼 두었어도 보인다(궤도 보기는 그 천체와 중심 천체)
+const toolShows = key => (distOn() && state.pair.dist.includes(key)) || (orbitOn() && (key === state.orbitKey || key === orbitCenterKey()));
 
 // 거리 재기 — 두 천체 중심을 잇는 선 + 선 가운데 거리 · 창에는 km · AU · 빛이 가는 시간
-const MEASURE = getComputedStyle(document.documentElement).getPropertyValue('--measure').trim() || '#ffd166';
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const MEASURE = cssVar('--measure') || '#ffd166';
 const distLine = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
   new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.9, depthWrite: false }));
 distLine.frustumCulled = false;
@@ -990,6 +1047,122 @@ function updateDist() {
   distTag.textContent = t.km;
   distTag.style.display = '';
   distTag.style.transform = `translate(${pm.x}px, ${pm.y}px) translate(-50%, -150%)`;
+}
+
+// ---------- 궤도 보기 ----------
+// 식은 src/orbit.js(테스트 tests/orbit.test.mjs). 타원·장반경·단반경 선은 중심 천체 기준 좌표(km)로 두고 물체째 중심 천체 자리에 놓는다.
+// 고르면 중심 천체로 날아가 궤도면에 수직으로(황도 북쪽 편) 내려다보고, 근점을 왼쪽·장축을 가로로, 타원 중심을 카드 밖 빈 곳 가운데에 둔다
+const ORB_N = 360;
+const ORB_LINE = cssVar('--orb-line') || '#ff9f6e', ORB_AXIS = cssVar('--orb-axis') || '#7cc4ff';
+const orbitSel = document.getElementById('orbit-body');
+fillPicker(orbitSel, false);
+state.orbitKey = 'earth';
+const orbitCenterKey = () => orbitCenter(state.orbitKey);
+let lastOrbit = '';
+orbitSel.addEventListener('change', () => { state.orbitKey = orbitSel.value; lastOrbit = ''; goOrbit(); });
+const orbGroup = new THREE.Group();
+orbGroup.visible = false;
+scene.add(orbGroup);
+function orbLine(n, color, opacity, dashed = false) {
+  const mat = dashed ? new THREE.LineDashedMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false, dashSize: 1, gapSize: 1 })
+    : new THREE.LineBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false });
+  const line = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3)), mat);
+  line.frustumCulled = false;
+  line.renderOrder = 3;
+  orbGroup.add(line);
+  return line;
+}
+const orbEllipse = orbLine(ORB_N + 1, ORB_LINE, 0.95);
+const orbA = orbLine(2, ORB_AXIS, 1), orbB = orbLine(2, ORB_AXIS, 1), orbRest = orbLine(2, ORB_AXIS, 0.55, true); // 중심 → 원점 쪽은 점선
+const orbTags = {
+  a: el('div', 'olabel', '장반경 a'), b: el('div', 'olabel', '단반경 b'), c: el('div', 'olabel dim', '중심'),
+  peri: el('div', 'olabel apsis'), apo: el('div', 'olabel apsis'),
+};
+orbTags.apo.style.alignItems = 'flex-end';
+const orbDots = { peri: el('div', 'odot'), apo: el('div', 'odot') };
+const orbCross = el('div', 'ocross');
+orbCross.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.6"/></svg>';
+const orbEls = [...Object.values(orbTags), ...Object.values(orbDots), orbCross];
+for (const e of orbEls) { e.style.display = 'none'; labelLayer.appendChild(e); }
+const orbOut = {
+  a: document.getElementById('orb-a'), b: document.getElementById('orb-b'), peri: document.getElementById('orb-peri'),
+  apo: document.getElementById('orb-apo'), e: document.getElementById('orb-e'), periK: document.getElementById('orb-peri-k'),
+  apoK: document.getElementById('orb-apo-k'), note: document.getElementById('orb-note'),
+};
+const kmAU = km => { const au = fmtAU(km, AU_KM); return `<b>${fmtKm(km)}</b>${au ? ' · ' + au : ''}`; };
+// 카드 값과 근점·원점 글자 — 바뀔 때만 다시 쓴다
+function orbitCard(o, jd) {
+  const [pk, ak] = apsisNames(o.center);
+  const vals = [o.a, o.b, o.peri, o.apo].map(kmAU), e = o.e.toFixed(4), note = `${fmtDay(jd)} 기준 궤도`;
+  const s = [...vals, e, pk, ak, note].join('|');
+  if (s === lastOrbit) return;
+  lastOrbit = s;
+  [orbOut.a.innerHTML, orbOut.b.innerHTML, orbOut.peri.innerHTML, orbOut.apo.innerHTML] = vals;
+  orbOut.e.textContent = e;
+  orbOut.periK.textContent = pk; orbOut.apoK.textContent = ak;
+  orbOut.note.textContent = note;
+  orbTags.peri.innerHTML = `${pk}<span>${fmtKm(o.peri)}</span>`;
+  orbTags.apo.innerHTML = `${ak}<span>${fmtKm(o.apo)}</span>`;
+}
+// 궤도를 둘 빈 곳(px) — 카드 옆에 넉넉한 자리가 있으면(넓은 화면) 옆, 아니면(폰) 카드 아래
+function orbitBox(w) {
+  const top = orbitEl.offsetTop, bottom = top + orbitEl.offsetHeight, right = orbitEl.offsetLeft + orbitEl.offsetWidth;
+  return w - right >= 420 ? { l: right + 8, t: top, r: w - 8, b: viewH - 8 } : { l: 8, t: bottom + 8, r: w - 8, b: viewH - 8 };
+}
+const toScene = a => new THREE.Vector3(...eclipticToScene(a));
+function goOrbit() {
+  const jd = julianDateTT(state.simMs);
+  const o = orbitOf(state.orbitKey, jd), v = orbitView(o), m = orbitMarks(o);
+  orbitCard(o, jd); // 카드 높이가 값에 따라 정해지므로 재기 전에 채운다
+  const w = finalStageW(), f = pxPerRad();
+  const fit = orbitFit(o, orbitBox(w), w / 2, viewH / 2, f);
+  const up = toScene(v.up), right = toScene(v.right);
+  // 타원 중심이 빈 곳 가운데에 보이도록 바라보는 점을 옮긴다(궤도면이 시선에 수직이라 화소 = f·길이/d)
+  const target = toScene(m.center).addScaledVector(right, -fit.dx * fit.d / f).addScaledVector(up, fit.dy * fit.d / f);
+  flyTo(o.center, { dir: toScene(v.dir), up, target, dist: () => fit.d });
+}
+const orbV = new THREE.Vector3();
+const orbCache = { jd: NaN, key: null, o: null, m: null };
+function setLine(line, pts) {
+  const arr = line.geometry.attributes.position.array;
+  pts.forEach((p, k) => { const q = eclipticToScene(p); arr[k * 3] = q[0]; arr[k * 3 + 1] = q[1]; arr[k * 3 + 2] = q[2]; });
+  line.geometry.attributes.position.needsUpdate = true;
+}
+function updateOrbit(jd) {
+  const on = orbitOn();
+  orbGroup.visible = on;
+  if (!on) { for (const e of orbEls) e.style.display = 'none'; return; }
+  if (orbCache.jd !== jd || orbCache.key !== state.orbitKey) {
+    const o = orbitOf(state.orbitKey, jd), m = orbitMarks(o);
+    Object.assign(orbCache, { jd, key: state.orbitKey, o, m });
+    orbitCard(o, jd);
+    setLine(orbEllipse, Array.from({ length: ORB_N + 1 }, (_, k) => ellipsePoint(o, (2 * Math.PI * k) / ORB_N)));
+    setLine(orbA, [m.center, m.peri]);
+    setLine(orbB, [m.center, m.minor]);
+    setLine(orbRest, [m.center, m.apo]);
+  }
+  const { o, m } = orbCache;
+  orbGroup.position.copy(byKey[o.center].mesh.position);
+  // 점선 간격 — 화면에서 약 6px이 되도록 카메라 거리로 정한다
+  orbRest.material.dashSize = orbRest.material.gapSize = camera.position.distanceTo(controls.target) * 6 / pxPerRad();
+  orbRest.computeLineDistances();
+  const scr = p => projectPoint(orbV.fromArray(eclipticToScene(p)).add(orbGroup.position));
+  const S = {
+    c: scr(m.center), peri: scr(m.peri), apo: scr(m.apo), minor: scr(m.minor),
+    aMid: scr(m.center.map((v, i) => (v + m.peri[i]) / 2)), bMid: scr(m.center.map((v, i) => (v + m.minor[i]) / 2)),
+  };
+  const inView = q => q.front && q.x > -50 && q.x < stageW + 50 && q.y > -50 && q.y < viewH;
+  const put = (e, q, tf) => { if (inView(q)) showAt(e, q.x, q.y, tf); else e.style.display = 'none'; };
+  // 선이 화면에서 짧으면 이름이 선을 덮으므로 감춘다
+  const aPx = Math.hypot(S.peri.x - S.c.x, S.peri.y - S.c.y), bPx = Math.hypot(S.minor.x - S.c.x, S.minor.y - S.c.y);
+  put(orbCross, S.c, '');
+  put(orbTags.c, S.c, S.minor.y > S.c.y ? ' translate(-50%, -190%)' : ' translate(-50%, 90%)'); // 단반경 선 반대쪽 — 초점 천체 이름표(같은 높이)를 피해 조금 떨어뜨린다
+  if (aPx > 60) put(orbTags.a, S.aMid, ' translate(-50%, -130%)'); else orbTags.a.style.display = 'none';
+  if (bPx > 30) put(orbTags.b, S.bMid, ' translate(8px, -50%)'); else orbTags.b.style.display = 'none';
+  put(orbDots.peri, S.peri, ''); put(orbDots.apo, S.apo, '');
+  // 근점은 왼쪽 끝이라 글자를 오른쪽으로, 원점은 왼쪽으로 펼친다 — 점 아래
+  put(orbTags.peri, S.peri, ' translate(-6px, 10px)');
+  put(orbTags.apo, S.apo, ' translate(calc(-100% + 6px), 10px)');
 }
 
 // 최소·최대 거리(계산 범위 1800~2050 전체) — 위성끼리는 수 초 걸려 웹 워커에서 셈하고 두 천체 짝마다 기억한다.
@@ -1401,7 +1574,7 @@ function step(now = performance.now()) {
     }
   }
   if (!state.fly) controls.update();
-  else camera.lookAt(0, 0, 0);
+  else camera.lookAt(controls.target);
   camera.updateMatrixWorld();
   updateClock();
   if (state.tool === 'size') return; // 크기 비교 중에는 본 장면을 그리지 않는다 — 위치·시각만 이어 간다
@@ -1411,6 +1584,7 @@ function step(now = performance.now()) {
   updateSky(updateGroupLabels(updateLabels()));
   updateDist();
   updateExt(fp);
+  updateOrbit(jd);
 }
 
 function draw() {

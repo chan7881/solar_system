@@ -106,17 +106,23 @@ function series(terms, t) {
   return [re, im];
 }
 
-// 행성 중심 J2000 황도 좌표(km)
-export function moonPosition(key, jd) {
-  if (key === 'moon') return moonGeocentric(jd);
+// 맞춘 식의 그 시각 평균 궤도 요소(달 제외) — a(km), e, 평균 경도 L·근점 경도 varpi·경사 inc·승교점 node(rad, 위성마다의 기준면),
+// frame: 기준면 좌표 → J2000 황도 좌표의 세 축(행)
+export function moonMeanElements(key, jd) {
   const m = FITS[key];
   if (!m) throw new Error(`위성 없음: ${key}`);
   const t = jd - J2000;
   let L = m.L0 + m.n * t + m.c2 * t * t;
   for (const [f, A, B] of m.Lterms) L += A * Math.cos(f * t) + B * Math.sin(f * t);
   const [kr, ki] = series(m.Kterms, t), [hr, hi] = series(m.Hterms, t);
-  const e = Math.hypot(kr, ki), varpi = Math.atan2(ki, kr);
-  const inc = Math.asin(Math.min(1, Math.hypot(hr, hi))), node = Math.atan2(hi, hr);
+  return { a: m.a, e: Math.hypot(kr, ki), L, varpi: Math.atan2(ki, kr),
+           inc: Math.asin(Math.min(1, Math.hypot(hr, hi))), node: Math.atan2(hi, hr), frame: m.frame };
+}
+
+// 행성 중심 J2000 황도 좌표(km)
+export function moonPosition(key, jd) {
+  if (key === 'moon') return moonGeocentric(jd);
+  const { e, L, varpi, inc, node } = moonMeanElements(key, jd), m = FITS[key];
   const E = solveKepler(L - varpi, e);
   const xp = m.a * (Math.cos(E) - e), yp = m.a * Math.sqrt(1 - e * e) * Math.sin(E);
   const w = varpi - node;

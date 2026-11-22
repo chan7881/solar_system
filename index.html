@@ -53,15 +53,31 @@ if (matchMedia('(min-width: 760px)').matches) document.body.classList.add('sb-op
     <span>대기</span><span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span><span id="atmo-state">켬</span>
   </button>
   <div id="tools">
-    <button id="tool-dist" type="button" aria-pressed="false" aria-controls="dist">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7.2 15.5l9.6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2.5 2.2"/></svg>
-      <span>거리 재기</span>
-    </button>
-    <button id="tool-size" type="button" aria-controls="compare">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="13" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="17" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-      <span>크기 비교</span>
+    <div id="tool-menu" role="menu" aria-label="도구 고르기" hidden>
+      <button type="button" role="menuitemradio" aria-checked="false" data-tool="dist"><svg class="chk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>거리 재기</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" data-tool="size"><svg class="chk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>크기 비교</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" data-tool="orbit"><svg class="chk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>궤도 보기</span></button>
+    </div>
+    <button id="tool-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="tool-menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4.5l5 5-10 10H4.5v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 7l5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <span id="tool-name">도구</span>
+      <svg class="caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </div>
+  <section id="orbit" class="tool-card" aria-label="궤도 보기" hidden>
+    <div class="tc-head"><span class="tc-title">궤도 보기</span>
+      <button class="tc-close" type="button" data-close="orbit"><span>닫기</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div class="tc-pick"><select id="orbit-body" aria-label="궤도를 볼 천체"></select></div>
+    <dl class="orb-vals" aria-live="polite">
+      <dt>장반경 a</dt><dd id="orb-a"></dd>
+      <dt>단반경 b</dt><dd id="orb-b"></dd>
+      <dt id="orb-peri-k">근일점</dt><dd id="orb-peri"></dd>
+      <dt id="orb-apo-k">원일점</dt><dd id="orb-apo"></dd>
+      <dt>이심률 e</dt><dd id="orb-e"></dd>
+    </dl>
+    <p class="orb-note" id="orb-note"></p>
+  </section>
   <section id="dist" class="tool-card" aria-label="거리 재기" hidden>
     <div class="tc-head"><span class="tc-title">거리 재기</span>
       <button class="tc-close" type="button" data-close="dist"><span>닫기</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>

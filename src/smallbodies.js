@@ -80,6 +80,17 @@ function bracket(rows, jd) {
   return [k, f];
 }
 
+// 그 시각의 접촉 궤도 요소 — 앞뒤 두 기원의 요소를 선형 보간(각은 360° 넘김을 고려). a·q(AU), 각(°)
+export function smallBodyElements(key, jd) {
+  const rows = SB[key];
+  if (!rows) throw new Error(`소천체 요소 없음: ${key}`);
+  const [k, f] = bracket(rows, jd), p = rows[k], q = rows[k + 1];
+  const lin = i => p[i] + (q[i] - p[i]) * f;
+  const ang = i => p[i] + ((((q[i] - p[i]) % 360) + 540) % 360 - 180) * f;
+  const e = lin(1), qr = lin(2);
+  return { e, q: qr, a: qr / (1 - e), i: lin(3), node: ang(4), argp: ang(5) };
+}
+
 // 왜행성·혜성의 태양 중심 J2000 황도 좌표(AU)
 export function smallBodyHelio(key, jd) {
   const rows = SB[key];
