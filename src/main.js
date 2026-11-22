@@ -80,7 +80,7 @@ function ellipsoidGeometry(re, rp) {
 // 타이탄: Cassini ISS 근적외선(938nm) 모자이크(흑백 — 연무를 뚫는 파장으로 본 밝기, 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
 
-// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·갈릴레이 위성·토성 위성·포보스·데이모스·카론 — 히페리온은 모형이 없어 몸체 +Y(자전축·긴 축)를 장면 +Y에 둔 채 돌리지 않는다). 나머지는 단색이라 돌려도 보이지 않는다
+// 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·갈릴레이 위성·토성 위성·포보스·데이모스·카론, 히페리온은 보기용 회전 — 긴 축을 황도 북극에 두고 관측 빠르기로). 나머지는 단색이라 돌려도 보이지 않는다
 // 포보스·데이모스·히페리온·혜성 핵은 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
 function loadShape(b) {
   fetch(`textures/${b.key}_shape.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
