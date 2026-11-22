@@ -7,6 +7,7 @@ import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, ringAlbedoGLSL } from './rings_glsl.
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
+import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples, stateFrom } from './comets.js';
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText } from './tools.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
@@ -79,7 +80,7 @@ function ellipsoidGeometry(re, rp) {
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
 
 // 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·타이탄·포보스·데이모스·카론). 나머지는 단색이라 돌려도 보이지 않는다
-// 포보스·데이모스는 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
+// 포보스·데이모스·혜성 핵은 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
 function loadShape(b) {
   fetch(`textures/${b.key}_shape.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
     const { positions, index } = parseShape(buf);
@@ -1124,7 +1125,7 @@ function buildCompare() {
   const [A, B] = cmpItems;
   cmpRatio.textContent = ratioText(A.b, A.d, B.b, B.d);
 }
-// 모양 파일(포보스·데이모스)·고리 단면이 비교 화면을 연 뒤에 도착하면 새로 짠다
+// 모양 파일(포보스·데이모스·혜성 핵)·고리 단면이 비교 화면을 연 뒤에 도착하면 새로 짠다
 const cmpStale = () => cmpItems.some(it => it.obj.geometry !== it.b.mesh.geometry || (it.b.key === 'saturn' && it.ring !== ringMesh.visible));
 function drawCompare() {
   if (cmpStale()) buildCompare();
@@ -1154,6 +1155,195 @@ function drawCompare() {
     if (tiny) ring.style.transform = `translate(${x}px, ${L.y}px)`;
   });
   renderer.render(cmpScene, cmpCam);
+}
+
+// ---------- 혜성 코마·꼬리 ----------
+// 식은 src/comets.js(테스트 tests/comets.test.mjs). 먼지 꼬리 = 노란 알갱이(복사압 β별 케플러 운동), 이온 꼬리 = 푸른 곧은 꼬리,
+// 코마 = 핵 둘레의 뿌연 머리(기둥 밀도 ∝ 1/ρ). 모두 더하기 섞기(빛을 내거나 흩뜨리는 얇은 기체·먼지라 뒤를 가리지 않는다).
+// 밝기: 실제로는 엔케가 헤일-밥보다 수천 배 어두워 화면에서 안 보이므로, 활동량의 로그로 눈금을 줄인다(COMET_GLOW).
+// 먼지 알갱이마다의 밝기는 dustTail의 무게(떨어질 때의 활동량 × √β) ÷ 지금 활동량(근일점을 지난 뒤 오래된 알갱이가 더 밝을 수 있다).
+const DUST_GAIN = 25, ION_GAIN = 0.3, HEAD_MAX = 2;
+const MAX_POINT_PX = Math.min(512, renderer.getContext().getParameter(renderer.getContext().ALIASED_POINT_SIZE_RANGE)[1]);
+const COMET_GLOW = q => THREE.MathUtils.clamp((Math.log10(q) - 26) / 5, 0, 1); // 1e26 분자/s에서 0, 1e31에서 1
+const DUST_S = dustSamples();
+const DUST_N = DUST_S.beta.length, ION_N = 4000;
+// 이온 꼬리 표본: 꼬리 길이에 대한 거리 비(지수 분포 — 핵 쪽이 짙다)와 옆 퍼짐(정규 분포 두 개, 멀수록 넓다)
+const ION_S = (() => {
+  let s = 99; const R = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  const g = () => Math.sqrt(-2 * Math.log(R() + 1e-12)) * Math.cos(2 * Math.PI * R());
+  return Array.from({ length: ION_N }, () => [Math.min(1, -Math.log(1 - R() * 0.95) / 3), g(), g()]);
+})();
+const glowVS = /* glsl */`
+  #include <common>
+  #include <logdepthbuf_pars_vertex>
+  attribute float aW, aS; // 무게 · 알갱이 덩이 크기(km — 핵에서 멀수록 넓게 퍼진다)
+  uniform float uPpr, uSize, uGain, uMaxPx; // uMaxPx: 이 GPU의 가장 큰 점 크기 · uSize: 밝기 기준 크기(km) — 덩이가 크면 같은 빛이 넓게 퍼져 (uSize/aS)²로 흐려진다
+  varying float vA;
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    float px = aS * uPpr / max(-mv.z, 1e-3);
+    float cp = clamp(px, 2.0, uMaxPx);
+    vA = aW * uGain * (uSize / aS) * (uSize / aS) * min(1.0, (px / cp) * (px / cp)); // 2px보다 작게 보이면 크기 대신 밝기를 줄인다
+    gl_PointSize = cp;
+    gl_Position = projectionMatrix * mv;
+    #include <logdepthbuf_vertex>
+  }`;
+const glowFS = /* glsl */`
+  #include <common>
+  #include <logdepthbuf_pars_fragment>
+  uniform vec3 uColor;
+  varying float vA;
+  void main() {
+    #include <logdepthbuf_fragment>
+    vec2 c = gl_PointCoord * 2.0 - 1.0;
+    float d2 = dot(c, c);
+    if (d2 > 1.0) discard;
+    gl_FragColor = vec4(uColor * exp(-3.0 * d2) * (1.0 - d2) * (1.0 - d2) * vA, 1.0); // 가장자리에서 0 — 겹친 덩이의 테두리가 안 보이게
+  }`;
+const glowMat = (color, gain) => new THREE.ShaderMaterial({
+  uniforms: { uPpr: { value: 1 }, uSize: { value: 1 }, uGain: { value: gain }, uMaxPx: { value: MAX_POINT_PX }, uColor: { value: new THREE.Color(color) } },
+  vertexShader: glowVS, fragmentShader: glowFS,
+  transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+// 코마: 카메라를 향한 사각형(정점 셰이더에서 화면 쪽으로 편다). ρ/Rc로 밝기 ∝ (1/ρ)·exp(−ρ/Rc)
+const comaMat = () => new THREE.ShaderMaterial({
+  uniforms: { uR: { value: 1 }, uGain: { value: 0 }, uColor: { value: new THREE.Color(0xd9efe4) } },
+  vertexShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    uniform float uR;
+    varying vec2 vQ;
+    void main() {
+      vQ = position.xy * 4.0; // 사각형은 코마 반지름의 4배까지
+      vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+      mv.xy += position.xy * uR * 4.0;
+      gl_Position = projectionMatrix * mv;
+      #include <logdepthbuf_vertex>
+    }`,
+  fragmentShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    uniform float uGain; uniform vec3 uColor;
+    varying vec2 vQ;
+    void main() {
+      #include <logdepthbuf_fragment>
+      float r = length(vQ);
+      if (r > 4.0) discard;
+      float I = 0.025 / max(r, 0.02) * exp(-r) * (1.0 - smoothstep(3.0, 4.0, r));
+      gl_FragColor = vec4(uColor * I * uGain, 1.0);
+    }`,
+  transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+// 코마·꼬리는 따로 모아(반정밀 부동소수 화면) 1 − e^(−x)로 눌러 본 장면 위에 더한다 — 핵 근처처럼 겹쳐 아주 밝은 곳이
+// 하얗게 뭉개지지 않게(눈·사진기처럼 밝은 곳일수록 덜 밝아짐). 깊이는 보지 않는다(행성 뒤의 꼬리도 비친다 — 드문 경우라 둔다)
+const glowScene = new THREE.Scene();
+// 반정밀 부동소수 화면에 그릴 수 없는 GPU(일부 옛 모바일)는 8비트로 — 밝은 곳이 1에서 잘리지만 꼬리는 보인다
+const GLOW_TYPE = renderer.extensions.has('EXT_color_buffer_half_float') || renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType;
+const glowRT = new THREE.WebGLRenderTarget(1, 1, { type: GLOW_TYPE, depthBuffer: false });
+const glowQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: { tGlow: { value: glowRT.texture } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: /* glsl */`
+    #include <common>
+    uniform sampler2D tGlow; varying vec2 vUv;
+    void main() {
+      vec3 x = texture2D(tGlow, vUv).rgb;
+      gl_FragColor = vec4(1.0 - exp(-x), 1.0);
+      #include <colorspace_fragment>
+    }`,
+  depthTest: false, depthWrite: false, transparent: true, blending: THREE.AdditiveBlending,
+}));
+glowQuad.frustumCulled = false;
+const glowQuadScene = new THREE.Scene().add(glowQuad);
+const glowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+function drawGlow() {
+  if (!comets.some(C => C.dust.visible || C.coma.visible)) return;
+  const cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+  renderer.setRenderTarget(glowRT);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(glowScene, camera);
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(cc, ca); // 배경이 없는 크기 비교 장면이 투명하게 지워지지 않게
+  const ac = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.render(glowQuadScene, glowCam);
+  renderer.autoClear = ac;
+}
+const comets = COMETS.map(c => {
+  const b = byKey[c.key];
+  const dust = new THREE.Points(new THREE.BufferGeometry(), glowMat(0xffdca0, 0.5));
+  dust.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(DUST_N * 3), 3));
+  dust.geometry.setAttribute('aW', new THREE.BufferAttribute(new Float32Array(DUST_N), 1));
+  dust.geometry.setAttribute('aS', new THREE.BufferAttribute(new Float32Array(DUST_N), 1));
+  const ion = new THREE.Points(new THREE.BufferGeometry(), glowMat(0x6fa8ff, 0.35));
+  ion.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ION_N * 3), 3));
+  ion.geometry.setAttribute('aW', new THREE.BufferAttribute(new Float32Array(ION_N).fill(1), 1));
+  ion.geometry.setAttribute('aS', new THREE.BufferAttribute(new Float32Array(ION_N), 1));
+  const coma = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), comaMat());
+  for (const o of [dust, ion, coma]) { o.frustumCulled = false; o.visible = false; glowScene.add(o); }
+  return { b, key: c.key, dust, ion, coma, state: stateFrom(jd => smallBodyHelio(c.key, jd)), jd: NaN, dw: new Float32Array(DUST_N) };
+});
+function updateComets(jd) {
+  const ppr = pxPerRad();
+  for (const C of comets) {
+    const { b, dust, ion, coma } = C;
+    const s = C.state(jd), rAU = Math.hypot(...s.r) / AU_KM, q = production(C.key, rAU);
+    // 핵에 바짝 다가가면(핵 크기의 300~30,000배) 코마·꼬리를 걷어 핵이 보이게 한다
+    const camD = b.mesh.position.distanceTo(camera.position);
+    const near = THREE.MathUtils.smoothstep(Math.log10(camD / b.reach), 2.5, 4.5);
+    const glow = COMET_GLOW(q) * near;
+    const on = b.mesh.visible && glow > 0.005;
+    dust.visible = ion.visible = coma.visible = on;
+    if (!on) continue;
+    for (const o of [dust, ion, coma]) o.position.copy(b.mesh.position);
+    const L = ionLength(C.key, rAU), Rc = comaRadius(C.key, rAU);
+    coma.material.uniforms.uR.value = Rc;
+    if (!(Math.abs(jd - C.jd) < 0.01)) { // 0.01일(약 14분)보다 적게 흐르면 다시 계산하지 않는다(점 무리와 같은 기준)
+      C.jd = jd;
+      // 먼지: 핵 기준 황도 좌표 → 장면 좌표
+      const pos = dust.geometry.attributes.position.array, aw = dust.geometry.attributes.aW.array, tmp = C.tmp ??= new Float32Array(DUST_N * 3);
+      dustTail(C.key, jd, C.state, DUST_S, tmp, C.dw, s);
+      const as = dust.geometry.attributes.aS.array;
+      let head = 0; // 핵 자리에 겹치는 덩이들의 밝기 합(셰이더와 같은 식, 이득 1) — 노출 맞춤용
+      for (let k = 0; k < DUST_N; k++) {
+        const x = tmp[k * 3], y = tmp[k * 3 + 1], z = tmp[k * 3 + 2], r = Math.sqrt(x * x + y * y + z * z);
+        pos[k * 3] = x; pos[k * 3 + 1] = z; pos[k * 3 + 2] = -y; // 황도 → 장면 (ephemeris.js eclipticToScene)
+        aw[k] = Math.min(3, C.dw[k] / q);
+        as[k] = Math.max(Rc, 0.4 * r);
+        const d2 = (2 * r / as[k]) ** 2;
+        if (d2 < 1) head += aw[k] * (Rc / as[k]) ** 2 * Math.exp(-3 * d2) * (1 - d2) ** 2;
+      }
+      C.head = head;
+      C.dustSize = Rc;
+      dust.geometry.attributes.position.needsUpdate = dust.geometry.attributes.aW.needsUpdate = dust.geometry.attributes.aS.needsUpdate = true;
+      // 이온: 꼬리 축 u와 그에 수직인 두 방향
+      const u = ionDirection(s.r, s.v), a = Math.abs(u[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+      const e1 = [u[1] * a[2] - u[2] * a[1], u[2] * a[0] - u[0] * a[2], u[0] * a[1] - u[1] * a[0]], n1 = Math.hypot(...e1);
+      for (let i = 0; i < 3; i++) e1[i] /= n1;
+      const e2 = [u[1] * e1[2] - u[2] * e1[1], u[2] * e1[0] - u[0] * e1[2], u[0] * e1[1] - u[1] * e1[0]];
+      const ip = ion.geometry.attributes.position.array, is = ion.geometry.attributes.aS.array, p = [0, 0, 0];
+      for (let k = 0; k < ION_N; k++) {
+        const [f, g1, g2] = ION_S[k], d = f * L, w = 0.004 * L + 0.04 * d;
+        for (let i = 0; i < 3; i++) p[i] = u[i] * d + (e1[i] * g1 + e2[i] * g2) * w;
+        ip[k * 3] = p[0]; ip[k * 3 + 1] = p[2]; ip[k * 3 + 2] = -p[1];
+        is[k] = 3 * w;
+      }
+      C.ionSize = 0.012 * L;
+      ion.geometry.attributes.position.needsUpdate = ion.geometry.attributes.aS.needsUpdate = true;
+    }
+    // 노출: 먼지 꼬리 머리(핵 자리)는 꼬리 끝보다 1,000배 넘게 밝다. 멀리서는 머리가 몇 화소라 그대로 두고(작은 흰 점),
+    // 머리(코마 반지름)가 화면에서 4px → 화면 높이의 10%로 커지는 동안 사진기처럼 노출을 줄여(로그로 이어짐) 머리 밝기를 HEAD_MAX에 맞춘다
+    const headPx = Rc / camD * ppr;
+    const fill = THREE.MathUtils.clamp(Math.log(headPx / 4) / Math.log(0.1 * viewH / 4), 0, 1);
+    const expo = Math.pow(Math.min(1, HEAD_MAX / (DUST_GAIN * glow * C.head + 1e-9)), fill);
+    coma.material.uniforms.uGain.value = glow * expo;
+    for (const [o, size] of [[dust, C.dustSize], [ion, C.ionSize]]) {
+      o.material.uniforms.uPpr.value = ppr * renderer.getPixelRatio(); // gl_PointSize는 그리기 버퍼 화소
+      o.material.uniforms.uSize.value = size;
+      o.material.uniforms.uGain.value = o === dust ? DUST_GAIN * glow * expo : ION_GAIN * glow * Math.sqrt(expo); // 이온 꼬리는 머리가 밝지 않아 덜 줄인다
+    }
+  }
 }
 
 // ---------- 한 장면 ----------
@@ -1204,6 +1394,7 @@ function step(now = performance.now()) {
   updateClock();
   if (state.tool === 'size') return; // 크기 비교 중에는 본 장면을 그리지 않는다 — 위치·시각만 이어 간다
   updateClouds(jd);
+  updateComets(jd);
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateSky(updateGroupLabels(updateLabels()));
   updateDist();
@@ -1212,7 +1403,7 @@ function step(now = performance.now()) {
 
 function draw() {
   if (state.tool === 'size') drawCompare();
-  else renderer.render(scene, camera);
+  else { renderer.render(scene, camera); drawGlow(); }
 }
 
 // 무대 크기에 맞추고, 화면 중심을 조작부 위 보이는 영역의 가운데로 옮긴다(세로 화각 45°도 그 영역 기준)
@@ -1222,6 +1413,7 @@ function resize() {
   viewH = Math.max(100, stageH - panelEl.offsetHeight);
   stageEl.style.setProperty('--panel-h', panelEl.offsetHeight + 'px');
   renderer.setSize(stageW, stageH, false);
+  { const v = renderer.getDrawingBufferSize(new THREE.Vector2()); glowRT.setSize(v.x, v.y); }
   camera.aspect = stageW / viewH;
   camera.setViewOffset(stageW, viewH, 0, 0, stageW, stageH);
   camera.updateProjectionMatrix();
@@ -1256,4 +1448,4 @@ booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };
+window.__app = { comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };

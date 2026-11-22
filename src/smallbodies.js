@@ -18,7 +18,8 @@ const N_JUPITER = 3034.74612775 / 36525 * DEG; // Standish 목성 평균 경도 
 
 // radius: 평균 반지름(km) · re·rp: 적도·극 반지름(회전 타원체) · abc: 3축 반지름(하우메아)
 // 반지름 출처: 세레스·명왕성 IAU 2015(pck00011), 에리스 Sicardy et al. 2011, 하우메아 Ortiz et al. 2017,
-//   마케마케 Brown 2013, 혜성 핵은 탐사·레이더 추정(핼리 Giotto, 67P Rosetta, 엔케·스위프트-터틀·헤일-밥 추정치)
+//   마케마케 Brown 2013, 혜성 핵은 모양 모형의 부피 같은 구 반지름(핼리 Stooke · 67P DLR SHAP4S, tools/make_comets.py)과
+//   추정치(엔케 Fernández et al. 2000 · 스위프트-터틀 · 헤일-밥 — 이 셋은 근사 모양)
 export const DWARFS = [
   { key: 'ceres',    name: '세레스',   radius: 469.7,  re: 487.3, rp: 446.0, color: 0x8a8580 },
   { key: 'pluto',    name: '명왕성',   radius: 1188.3, re: 1188.3, rp: 1188.3, color: 0xcaa98a },
@@ -27,12 +28,12 @@ export const DWARFS = [
   { key: 'eris',     name: '에리스',   radius: 1163,   re: 1163, rp: 1163, color: 0xe9e6e2 },
 ].map(b => ({ ...b, kind: 'dwarf' }));
 export const COMETS = [
-  { key: 'halley',      name: '핼리 혜성',          radius: 5.5 },
+  { key: 'halley',      name: '핼리 혜성',          radius: 4.59 },
   { key: 'encke',       name: '엔케 혜성',          radius: 2.4 },
-  { key: 'churyumov',   name: '추류모프-게라시멘코', radius: 2.0 },
+  { key: 'churyumov',   name: '추류모프-게라시멘코', radius: 1.62 },
   { key: 'swifttuttle', name: '스위프트-터틀 혜성',  radius: 13 },
   { key: 'halebopp',    name: '헤일-밥 혜성',       radius: 30 },
-].map(b => ({ ...b, re: b.radius, rp: b.radius, color: 0x8d8780, kind: 'comet' }));
+].map(b => ({ ...b, re: b.radius, rp: b.radius, color: 0x4a4643, kind: 'comet' })); // 핵은 숯처럼 어둡다(반사율 약 0.04)
 export const SMALL_BODIES = [...DWARFS, ...COMETS];
 export const isSmallBody = key => key in SB;
 

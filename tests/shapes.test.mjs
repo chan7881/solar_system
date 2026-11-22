@@ -49,3 +49,29 @@ test('포보스: 스티크니 쪽(동경 311°, 적도)이 타원체보다 움�
   assert.ok(s > 0.6, `스티크니 ${s.toFixed(2)}km`);
   assert.ok(m < 0.4, `거울 쪽 ${m.toFixed(2)}km`);
 });
+
+// 혜성 핵(tools/make_comets.py) — 부피 같은 구 반지름이 COMETS radius와, 가장 먼 점이 SHAPE_REACH와 맞는다
+import { COMETS } from '../src/smallbodies.js';
+for (const c of COMETS) {
+  test(`${c.key}: 바깥 감기, 부피 같은 구 반지름이 COMETS radius와 1% 안, SHAPE_REACH가 가장 먼 점보다 크고 0.02km 안`, () => {
+    const s = load(c.key), p = s.positions, v = shapeVolume(s);
+    assert.ok(v > 0, `부피 ${v}`);
+    const r = Math.cbrt(3 * v / 4 / Math.PI);
+    assert.ok(Math.abs(r / c.radius - 1) < 0.01, `${r.toFixed(3)} 대 ${c.radius}`);
+    let far = 0; for (let i = 0; i < p.length; i += 3) far = Math.max(far, Math.hypot(p[i], p[i + 1], p[i + 2]));
+    assert.ok(SHAPE_REACH[c.key] >= far && SHAPE_REACH[c.key] - far < 0.02, `${SHAPE_REACH[c.key]} 대 ${far.toFixed(3)}`);
+  });
+}
+// 핼리: Giotto·Vega로 잰 크기 약 16 × 8 × 8km(Keller et al. 1987 등) — 가장 긴 폭 14~17km, 나머지 둘 6.5~9km
+test('핼리: 길쭉한 핵 — 가장 긴 폭 14~17km, 나머지 6.5~9km', () => {
+  const { positions: p } = load('halley');
+  const w = [0, 1, 2].map(ax => { let lo = Infinity, hi = -Infinity; for (let i = ax; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]); } return hi - lo; }).sort((a, b) => b - a);
+  assert.ok(w[0] > 14 && w[0] < 17 && w[1] > 6.5 && w[1] < 9 && w[2] > 6.5 && w[2] < 9, w.map(x => x.toFixed(2)).join(' '));
+});
+// 67P: 두 덩이 — 부피 18.8km³ 안팎(Jorda et al. 2016: 18.8 ± 0.3), 폭 4.1 × 3.3 × 1.8km짜리 큰 덩이 + 작은 덩이(전체 약 5km)
+test('67P: 부피 17~20km³, 가장 긴 폭 4.6~5.4km', () => {
+  const s = load('churyumov'), p = s.positions, v = shapeVolume(s);
+  let lo = Infinity, hi = -Infinity; for (let i = 0; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]); }
+  assert.ok(v > 17 && v < 20, `부피 ${v.toFixed(2)}`);
+  assert.ok(hi - lo > 4.6 && hi - lo < 5.4, `x 폭 ${(hi - lo).toFixed(2)}`);
+});
