@@ -57,6 +57,10 @@ export function glowShrink(rs, Hv, dist = AU_KM) {
   return GLOW_SHRINK_MIN * f;
 }
 export function bloomScales(rs, Hv, dist = AU_KM) { const k = glowShrink(rs, Hv, dist); return BLOOM.map(g => g.a * rs + g.b * Hv * k); }
+// 베일(보라 안개)의 세기 배율: 1AU 안쪽은 1, 멀면 (1AU/거리)^VEIL_DIST_EXP(하한 VEIL_DIST_MIN) — 30AU에서 약 0.19
+export const VEIL_DIST_EXP = 0.5;
+export const VEIL_DIST_MIN = 0.05;
+export function veilScale(dist) { return dist > AU_KM ? Math.max(VEIL_DIST_MIN, (AU_KM / dist) ** VEIL_DIST_EXP) : 1; }
 // 넘친 핵(하얗게 찬 둥근 자리)의 가우스 폭(px): 같은 규칙으로 줄인다
 export const CORE_SIGMA = 0.032;
 export function coreSigma(rs, Hv, dist = AU_KM) { return CORE_SIGMA * Hv * glowShrink(rs, Hv, dist); }

@@ -10,7 +10,7 @@ import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, L
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
 import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples, stateFrom } from './comets.js';
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
-import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, visibleFraction, flareGain, bloomGain } from './flare.js';
+import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { refDistance, lightScale } from './exposure.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter } from './orbit.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
@@ -1588,7 +1588,7 @@ function drawGlow() {
 // 원반이 화면을 채우면 줄인다. 가림은 깊이 버퍼가 아니라 몸체 타원체에 선분을 쏘아 낸다(GPU에서 읽어 오면 멈칫해서) — 고리·혜성 꼬리는 가리지 않는다
 const flareU = {
   uSun: { value: new THREE.Vector2() }, uH: { value: 1 }, uRs: { value: 0 },
-  uCore: { value: 1 }, uGain: { value: 0 }, uGhostGain: { value: 0 }, uBloom: { value: 0 }, uSig: { value: BLOOM.map(() => 1) },
+  uCore: { value: 1 }, uVeil: { value: 1 }, uGain: { value: 0 }, uGhostGain: { value: 0 }, uBloom: { value: 0 }, uSig: { value: BLOOM.map(() => 1) },
   uG: { value: GHOSTS.map(() => new THREE.Vector4()) }, uGC: { value: GHOSTS.map(g => new THREE.Vector3(...g.color)) },
 };
 const v3 = a => `vec3(${a.map(x => x.toFixed(3)).join(', ')})`;
@@ -1598,7 +1598,7 @@ const flareQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.Shader
   fragmentShader: /* glsl */`
     #include <common>
     #define NG ${GHOSTS.length}
-    uniform vec2 uSun; uniform float uH, uRs, uGain, uGhostGain, uBloom, uCore; uniform float uSig[${BLOOM.length}];
+    uniform vec2 uSun; uniform float uH, uRs, uGain, uGhostGain, uBloom, uCore, uVeil; uniform float uSig[${BLOOM.length}];
     uniform vec4 uG[NG]; uniform vec3 uGC[NG];
     void main() {
       vec2 d = gl_FragCoord.xy - uSun;
@@ -1610,7 +1610,7 @@ const flareQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.Shader
       // 넘친 핵(하얗게 찬 둥근 자리) · 베일 글레어(태양 둘레 넓은 연자줏빛 안개, 화면 전체)
       float core = 5.0 * exp(-(e * e) / (uCore * uCore)); // 폭은 flare.js coreSigma(원반이 크면 줄임)
       vec3 veil = vec3(0.09, 0.045, 0.13) * exp(-r / 0.1) + vec3(0.04, 0.026, 0.06) * exp(-r / 0.35) + vec3(0.004, 0.003, 0.006); // 핵 둘레 자줏빛 + 넓은 안개 + 바닥
-      vec3 x = uBloom * bloom + uGain * (vec3(1.0, 0.98, 0.95) * core + veil);
+      vec3 x = uBloom * bloom + uGain * (vec3(1.0, 0.98, 0.95) * core + uVeil * veil);
       // 렌즈 유령: 속이 옅게 찬 원반 + 밝은 가장자리 고리(색마다 반지름이 조금 다른 무지갯빛)
       for (int i = 0; i < NG; i++) {
         float q = length(gl_FragCoord.xy - uG[i].xy) / uG[i].z;
@@ -1671,6 +1671,7 @@ function drawFlare() {
   flareU.uH.value = f.Hv;
   flareU.uRs.value = f.rs;
   flareU.uCore.value = coreSigma(f.rs, f.Hv, f.dist);
+  flareU.uVeil.value = veilScale(f.dist);
   flareU.uGain.value = f.gain;
   flareU.uGhostGain.value = 0.35 * f.gain;
   flareU.uBloom.value = f.bloom;

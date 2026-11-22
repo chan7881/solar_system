@@ -189,3 +189,12 @@ test('실제 크기 우선: 점(멀리)의 핵·번짐 폭이 1AU(원반 5px)보
   assert.ok(bloomScales(0, H, 30 * AU_KM)[3] < 40, `30AU 바깥 폭 ${bloomScales(0, H, 30 * AU_KM)[3]}`);
   assert.ok(bloomScales(60, H)[3] > bloomScales(5, H)[3]); // 가까이 갈수록 후광은 원반 따라 커진다
 });
+
+import { veilScale, VEIL_DIST_MIN } from '../src/flare.js';
+test('베일: 1AU 안쪽은 1, 멀수록 줄고 하한이 있다', () => {
+  assert.equal(veilScale(0.5 * AU_KM), 1);
+  close(veilScale(30 * AU_KM), 30 ** -0.5, 1e-12);
+  let prev = 1;
+  for (const au of [2, 5, 30, 100]) { const v = veilScale(au * AU_KM); assert.ok(v < prev, `${au}`); prev = v; }
+  close(veilScale(1e9 * AU_KM), VEIL_DIST_MIN, 1e-12);
+});
