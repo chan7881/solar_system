@@ -129,8 +129,9 @@ test('원반 반지름(px): 1AU·화각 45°·높이 1000px이면 약 5.6px, 멀
 });
 
 test('후광: 원반이 커지면 넓어지고, 점이어도 남으며, 가장자리에서 멀수록 어둡고 원반 안과 이어진다', () => {
-  const H = 1000, s0 = bloomScales(0, H), s1 = bloomScales(100, H);
-  s0.forEach((v, i) => { assert.ok(v > 0, '점이어도 번짐이 있다'); assert.ok(s1[i] > v, '원반이 크면 넓다'); });
+  const H = 1000, s0 = bloomScales(0, H), s1 = bloomScales(100, H), s5 = bloomScales(5, H);
+  // 2026-11-22: 원반이 5px 안팎이면 화면 높이 몫을 줄이므로(glowShrink) 점보다 좁을 수 있다. 줄임이 끝난 뒤(5px~)에는 원반을 따라 커진다
+  s0.forEach((v, i) => { assert.ok(v > 0, '점이어도 번짐이 있다'); assert.ok(s1[i] > s5[i], '원반이 크면 넓다'); });
   for (let i = 1; i < s0.length; i++) assert.ok(s0[i] > s0[i - 1], '겹마다 넓어진다');
   const at = [0, 5, 20, 80, 300].map(e => bloomAt(e, 50, H));
   for (let i = 1; i < at.length; i++) assert.ok(at[i] < at[i - 1], at.join());
@@ -164,4 +165,28 @@ test('화면 밖 감쇠: 원반이 크면 중심이 화면 밖이어도 가장�
   assert.equal(offscreenFade([1600 + 300, 500], 1600, 1000, 400), 1);
   assert.ok(offscreenFade([1600 + 300, 500], 1600, 1000, 0) < 1);
   close(offscreenFade([1600 + 650, 500], 1600, 1000, 400), 0.5, 1e-12);
+});
+
+// ---- 번짐·핵 크기 상한(2026-11-22): 원반의 실제 각크기가 우선 ----
+import { glowShrink, GLOW_SHRINK_MIN, coreSigma, CORE_SIGMA } from '../src/flare.js';
+test('번짐 줄임: 점이면 온전, 원반이 5px(/1000px) 이상이면 GLOW_SHRINK_MIN, 그 사이는 단조 감소', () => {
+  assert.equal(glowShrink(0, 1000), 1);
+  assert.equal(glowShrink(0.5, 1000), 1);
+  close(glowShrink(5, 1000), GLOW_SHRINK_MIN, 1e-12);
+  close(glowShrink(50, 1000), GLOW_SHRINK_MIN, 1e-12);
+  let prev = 1;
+  for (const rs of [0.6, 1, 2, 3, 4, 5]) { const g = glowShrink(rs, 1000); assert.ok(g < prev, `${rs}: ${g}`); prev = g; }
+  // 화면 크기에 비례(같은 비율이면 같다)
+  close(glowShrink(10, 2000), glowShrink(5, 1000), 1e-12);
+});
+test('실제 크기 우선: 1AU(원반 5px)의 핵·번짐 폭이 점일 때보다 확 줄고, 점이면 그대로 남는다', () => {
+  const H = 1000;
+  close(coreSigma(0, H), CORE_SIGMA * H, 1e-9, '점: 핵 폭 그대로');
+  close(coreSigma(5, H), CORE_SIGMA * H * GLOW_SHRINK_MIN, 1e-9);
+  const sPoint = bloomScales(0, H), sAu = bloomScales(5, H);
+  assert.ok(sPoint[3] > 200, `점의 가장 바깥 폭 ${sPoint[3]}`); // 점이어도 보이게
+  assert.ok(sAu[3] < 0.5 * 5 + 0.22 * H * 0.31, `1AU 바깥 폭 ${sAu[3]}`);
+  sAu.forEach((v, i) => assert.ok(v < sPoint[i] + BLOOM[i].a * 5, '원반이 커도 번짐 폭이 점의 폭보다 늘지 않는다(원반 몫 제외)'));
+  // 원반 크기 몫(a·rs)은 그대로 — 가까이 갈수록 후광이 같이 커진다
+  assert.ok(bloomScales(60, H)[3] > bloomScales(5, H)[3]);
 });

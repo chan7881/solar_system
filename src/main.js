@@ -10,7 +10,8 @@ import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, L
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
 import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples, stateFrom } from './comets.js';
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
-import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, visibleFraction, flareGain, bloomGain } from './flare.js';
+import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, visibleFraction, flareGain, bloomGain } from './flare.js';
+import { refDistance, lightScale } from './exposure.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter } from './orbit.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
@@ -135,7 +136,7 @@ const bodies = ALL.map(b => {
   }
   // 위치·궤도선 함수 — 행성(Standish)과 소천체(Horizons 요소)를 여기서 한 번 고른다(위성은 moons.js)
   const small = isSmallBody(b.key);
-  return { ...b, reach: SHAPE_REACH[b.key] ?? b.reach ?? b.radius, mesh, trail, orbitLine,
+  return { ...b, reach: SHAPE_REACH[b.key] ?? b.reach ?? b.radius, mesh, trail, orbitLine, expo: { value: 1 }, // expo: 햇빛 노출 배율(exposure.js) — 재질·고리·구름·가장자리 빛이 같이 쓴다
     helio: small ? smallBodyHelio : heliocentric, orbit: small ? smallBodyTrail : orbitTrail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
@@ -148,6 +149,7 @@ const ringU = {
   uTau: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
   uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
   uRe: { value: byKey.saturn.re }, uRp: { value: byKey.saturn.rp }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
+  uExpo: byKey.saturn.expo,
 };
 const RING_GLSL = /* glsl */`
   uniform sampler2D uTau; uniform float uR0, uR1;
@@ -178,7 +180,7 @@ const ringMat = new THREE.ShaderMaterial({
     ${RING_GLSL}
     ${RING_LIGHT_GLSL}
     ${RING_ALBEDO_GLSL}
-    uniform vec3 uCamL; uniform float uRe, uRp, uLight;
+    uniform vec3 uCamL; uniform float uRe, uRp, uLight, uExpo;
     varying vec3 vP;
     void main() {
       #include <logdepthbuf_fragment>
@@ -190,7 +192,7 @@ const ringMat = new THREE.ShaderMaterial({
       float T = tf.x, F = tf.y;
       if (inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0; // 토성 그림자
       vec4 a = ringAlbedo(r);
-      gl_FragColor = vec4(a.rgb * a.a * F * uLight, 1.0 - T);
+      gl_FragColor = vec4(a.rgb * a.a * F * uLight * uExpo, 1.0 - T);
       #include <colorspace_fragment>
     }`,
 });
@@ -222,6 +224,7 @@ byKey.saturn.mesh.material.onBeforeCompile = sh => {
 // 법선은 타원체 면의 법선이라 셰이더의 mu가 측지 위도 기준 sin(태양 고도)와 같다(tests/atmosphere.test.mjs의 sunMu와 같은 값).
 const srgb = (r, g, b) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
 const earthU = {
+  uExpo: byKey.earth.expo,
   uSunL: { value: new THREE.Vector3(1, 0, 0) },
   uCamL: { value: new THREE.Vector3(0, 0, 1) },
   uNight: { value: null },
@@ -277,13 +280,13 @@ const atmoMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * earthU.uRimK.
     #include <common>
     #include <logdepthbuf_pars_fragment>
     ${RIM_GLSL}
-    uniform vec3 uSunL; uniform vec3 uCamL; uniform float uRimK; uniform vec3 uRimColor;
+    uniform vec3 uSunL; uniform vec3 uCamL; uniform float uRimK, uExpo; uniform vec3 uRimColor;
     varying vec3 vP; varying vec3 vN;
     void main() {
       #include <logdepthbuf_fragment>
       vec3 n = normalize(vN);
       float g = rimGlow(abs(dot(n, normalize(uCamL - vP))), dot(n, uSunL), uRimK);
-      gl_FragColor = vec4(uRimColor * g, 1.0);
+      gl_FragColor = vec4(uRimColor * g * uExpo, 1.0);
       #include <colorspace_fragment>
     }`,
 }));
@@ -304,7 +307,7 @@ const cloudMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * CLOUD_K, byK
   fragmentShader: /* glsl */`
     #include <common>
     #include <logdepthbuf_pars_fragment>
-    uniform sampler2D uCloud; uniform vec3 uSunL; uniform float uCloudOpacity;
+    uniform sampler2D uCloud; uniform vec3 uSunL; uniform float uCloudOpacity, uExpo;
     varying vec3 vN; varying vec2 vUvC;
     void main() {
       #include <logdepthbuf_fragment>
@@ -312,7 +315,7 @@ const cloudMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * CLOUD_K, byK
       float mu = dot(normalize(vN), uSunL);
       float day = smoothstep(-0.1, 0.35, mu);
       vec3 tint = mix(vec3(1.0, 0.5, 0.28), vec3(1.0, 0.99, 0.97), smoothstep(0.0, 0.25, mu));
-      vec3 col = tint * (0.012 + 0.9 * day);
+      vec3 col = tint * (0.012 + 0.9 * day) * uExpo;
       gl_FragColor = vec4(col, a);
       #include <colorspace_fragment>
     }`,
@@ -1583,7 +1586,7 @@ function drawGlow() {
 // 원반이 화면을 채우면 줄인다. 가림은 깊이 버퍼가 아니라 몸체 타원체에 선분을 쏘아 낸다(GPU에서 읽어 오면 멈칫해서) — 고리·혜성 꼬리는 가리지 않는다
 const flareU = {
   uSun: { value: new THREE.Vector2() }, uH: { value: 1 }, uRs: { value: 0 },
-  uGain: { value: 0 }, uGhostGain: { value: 0 }, uBloom: { value: 0 }, uSig: { value: BLOOM.map(() => 1) },
+  uCore: { value: 1 }, uGain: { value: 0 }, uGhostGain: { value: 0 }, uBloom: { value: 0 }, uSig: { value: BLOOM.map(() => 1) },
   uG: { value: GHOSTS.map(() => new THREE.Vector4()) }, uGC: { value: GHOSTS.map(g => new THREE.Vector3(...g.color)) },
 };
 const v3 = a => `vec3(${a.map(x => x.toFixed(3)).join(', ')})`;
@@ -1593,7 +1596,7 @@ const flareQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.Shader
   fragmentShader: /* glsl */`
     #include <common>
     #define NG ${GHOSTS.length}
-    uniform vec2 uSun; uniform float uH, uRs, uGain, uGhostGain, uBloom; uniform float uSig[${BLOOM.length}];
+    uniform vec2 uSun; uniform float uH, uRs, uGain, uGhostGain, uBloom, uCore; uniform float uSig[${BLOOM.length}];
     uniform vec4 uG[NG]; uniform vec3 uGC[NG];
     void main() {
       vec2 d = gl_FragCoord.xy - uSun;
@@ -1603,7 +1606,7 @@ const flareQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.Shader
       // 후광(블룸): 원반 크기 + 화면 높이에 비례하는 네 겹(flare.js BLOOM·bloomScales) — 바깥 겹이 광선 자리를 덮는다
       vec3 bloom = ${BLOOM.map((g, i) => `${g.k.toFixed(3)} * exp(-e / uSig[${i}]) * ${v3(g.color)}`).join(' + ')};
       // 넘친 핵(하얗게 찬 둥근 자리) · 베일 글레어(태양 둘레 넓은 연자줏빛 안개, 화면 전체)
-      float core = 5.0 * exp(-(r * r) / (0.032 * 0.032));
+      float core = 5.0 * exp(-(e * e) / (uCore * uCore)); // 폭은 flare.js coreSigma(원반이 크면 줄임)
       vec3 veil = vec3(0.09, 0.045, 0.13) * exp(-r / 0.1) + vec3(0.04, 0.026, 0.06) * exp(-r / 0.35) + vec3(0.004, 0.003, 0.006); // 핵 둘레 자줏빛 + 넓은 안개 + 바닥
       vec3 x = uBloom * bloom + uGain * (vec3(1.0, 0.98, 0.95) * core + veil);
       // 렌즈 유령: 속이 옅게 찬 원반 + 밝은 가장자리 고리(색마다 반지름이 조금 다른 무지갯빛)
@@ -1665,6 +1668,7 @@ function drawFlare() {
   flareU.uSun.value.set(f.p[0], f.H - f.p[1]);
   flareU.uH.value = f.Hv;
   flareU.uRs.value = f.rs;
+  flareU.uCore.value = coreSigma(f.rs, f.Hv);
   flareU.uGain.value = f.gain;
   flareU.uGhostGain.value = 0.35 * f.gain;
   flareU.uBloom.value = f.bloom;
@@ -1752,6 +1756,27 @@ function updateComets(jd) {
 }
 
 // ---------- 한 장면 ----------
+// 햇빛 노출: 모든 몸체(태양 빼고)의 직접광에 몸체별 배율 uExpo를 곱한다 — 식은 exposure.js. 토성·지구는 앞서 단 패치 위에 겹친다.
+// 프로그램 캐시 열쇠는 onBeforeCompile 글자를 쓰므로 몸체마다 따로 준다(안 그러면 서로 다른 패치가 한 프로그램을 같이 쓴다).
+for (const b of bodies) {
+  if (b.key === 'sun') continue;
+  const mat = b.mesh.material, prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    sh.uniforms.uExpo = b.expo;
+    sh.fragmentShader = 'uniform float uExpo;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>',
+      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular *= uExpo;');
+  };
+  mat.customProgramCacheKey = () => 'expo:' + b.key;
+}
+function updateExposure(fp) {
+  const sp = byKey.sun.pos;
+  const dRef = refDistance(Math.hypot(fp[0] - sp[0], fp[1] - sp[1], fp[2] - sp[2]));
+  for (const b of bodies) {
+    if (b.key === 'sun') continue;
+    b.expo.value = state.tool === 'size' ? 1 : lightScale(dRef, Math.hypot(b.pos[0] - sp[0], b.pos[1] - sp[1], b.pos[2] - sp[2]));
+  }
+}
 let lastT = performance.now();
 function step(now = performance.now()) {
   const dt = THREE.MathUtils.clamp((now - lastT) / 1000, 0, 0.25); // 그림 틀 시각이 앞설 수 있어 음수를 막는다
@@ -1765,6 +1790,7 @@ function step(now = performance.now()) {
   const jd = julianDateTT(state.simMs);
   updatePositions(jd);
   const fp = focusPosition(now);
+  updateExposure(fp);
   const ppr = pxPerRad();
   const L = state.layers;
   for (const b of bodies) {
