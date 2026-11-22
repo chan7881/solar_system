@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation, raDecToScene } from './ephemeris.js';
 import { RING_EDGES, ringMipLevels } from './rings.js';
+import { NIGHT_GLSL, RIM_GLSL } from './atmosphere.js';
 import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, ringAlbedoGLSL } from './rings_glsl.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
@@ -81,6 +82,8 @@ function ellipsoidGeometry(re, rp) {
 // 금성: Magellan 레이더 지도(흑백, 레이더 반사 세기 — 눈으로 보는 색이 아니다)
 // 타이탄: Cassini ISS 근적외선(938nm) 모자이크(흑백 — 연무를 뚫는 파장으로 본 밝기, 눈으로 보는 색이 아니다)
 const SURFACE_UNDER = { venus: 'textures/venus_surface_2k.jpg', titan: 'textures/titan_surface_2k.jpg' };
+// 「대기」 스위치를 보이는 천체 — 지구는 표면을 가리지 않고 가장자리 빛(atmoMesh)만 켜고 끈다
+const HAS_ATMO = new Set([...Object.keys(SURFACE_UNDER), 'earth']);
 
 // 위성은 구(평균 반지름)로 그린다 — 자세 모형(hasRotation)이 있는 것만 돌린다(달·갈릴레이 위성·토성 위성·포보스·데이모스·카론, 히페리온은 보기용 회전 — 긴 축을 황도 북극에 두고 관측 빠르기로). 나머지는 단색이라 돌려도 보이지 않는다
 // 포보스·데이모스·히페리온·혜성 핵은 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
@@ -211,6 +214,72 @@ byKey.saturn.mesh.material.onBeforeCompile = sh => {
       reflectedLight.directSpecular *= ringT;
     }`);
 };
+
+// ---------- 지구 밤 불빛·대기 가장자리 빛 (src/atmosphere.js) ----------
+// 둘 다 지구 고정 좌표에서 계산한다 — 태양 방향(uSunL)·카메라(uCamL)를 지구 회전의 역으로 돌려 넣는다(updateEarthAtmo).
+// 밤 불빛: NASA Black Marble 2016 흑백 세기(textures/earth_night_2k.jpg)에 나트륨등 색을 입혀 낮 쪽에서는 0, 박명을 지나 다 켜진다.
+// 법선은 타원체 면의 법선이라 셰이더의 mu가 측지 위도 기준 sin(태양 고도)와 같다(tests/atmosphere.test.mjs의 sunMu와 같은 값).
+const srgb = (r, g, b) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
+const earthU = {
+  uSunL: { value: new THREE.Vector3(1, 0, 0) },
+  uCamL: { value: new THREE.Vector3(0, 0, 1) },
+  uNight: { value: null },
+  uNightOn: { value: 0 }, // 질감을 받고 「지구 밤 불빛」 레이어가 켜져 있을 때 1
+  uNightColor: { value: srgb(1.0, 0.8, 0.5).multiplyScalar(1.6) },
+  uRimK: { value: 1 + 100 / 6378.137 }, // 대기 껍질 = 지구 반지름 + 100km(카르만 선)
+  uRimColor: { value: srgb(0.4, 0.65, 1.0).multiplyScalar(1.2) },
+};
+loadTexture('textures/earth_night_2k.jpg').then(tex => { earthU.uNight.value = tex; },
+  () => console.warn('밤 불빛 질감을 못 불러옴 — 밤 쪽은 어둡게 둔다'));
+byKey.earth.mesh.material.onBeforeCompile = sh => {
+  Object.assign(sh.uniforms, { uSunL: earthU.uSunL, uNight: earthU.uNight, uNightOn: earthU.uNightOn, uNightColor: earthU.uNightColor });
+  sh.vertexShader = 'varying vec3 vNl; varying vec2 vUvN;\n' +
+    sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvNl = normal; vUvN = uv;');
+  sh.fragmentShader = `varying vec3 vNl; varying vec2 vUvN;\nuniform vec3 uSunL; uniform sampler2D uNight; uniform float uNightOn; uniform vec3 uNightColor;\n${NIGHT_GLSL}\n` +
+    sh.fragmentShader.replace('#include <emissivemap_fragment>', `
+    #include <emissivemap_fragment>
+    if (uNightOn > 0.5) {
+      float lit = texture2D(uNight, vUvN).r;
+      totalEmissiveRadiance += uNightColor * lit * nightWeight(dot(normalize(vNl), uSunL));
+    }`);
+};
+const atmoMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * earthU.uRimK.value, byKey.earth.rp * earthU.uRimK.value), new THREE.ShaderMaterial({
+  uniforms: earthU,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    varying vec3 vP; varying vec3 vN;
+    void main() {
+      vP = position; vN = normal;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      #include <logdepthbuf_vertex>
+    }`,
+  fragmentShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    ${RIM_GLSL}
+    uniform vec3 uSunL; uniform vec3 uCamL; uniform float uRimK; uniform vec3 uRimColor;
+    varying vec3 vP; varying vec3 vN;
+    void main() {
+      #include <logdepthbuf_fragment>
+      vec3 n = normalize(vN);
+      float g = rimGlow(abs(dot(n, normalize(uCamL - vP))), dot(n, uSunL), uRimK);
+      gl_FragColor = vec4(uRimColor * g, 1.0);
+      #include <colorspace_fragment>
+    }`,
+}));
+atmoMesh.renderOrder = 2.5; // 궤도선(2) 다음 — 고리와 같은 까닭(깊이를 안 써서 먼저 그리면 뒤의 선이 덮는다)
+byKey.earth.mesh.add(atmoMesh);
+function updateEarthAtmo() {
+  const m = byKey.earth.mesh;
+  atmoMesh.visible = m.visible && state.atmosphere;
+  earthU.uNightOn.value = earthU.uNight.value && state.layers.nightLights ? 1 : 0;
+  if (!m.visible) return;
+  qInv.copy(m.quaternion).invert();
+  earthU.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
+  earthU.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
+}
 
 fetch('textures/saturn_rings.json').then(r => r.json()).then(p => {
   // 멀리서 보면 수천 줄의 결이 화소보다 가늘어 물결무늬가 생긴다 → 밉맵. 투과율로 평균한 단계를 CPU에서 만든다
@@ -775,7 +844,7 @@ function markFocus() {
   if (sys) setExpanded(sys, true);
 }
 
-// 대기 켜기·끄기 — 표면이 대기에 가려진 천체에 다가가 있을 때만 단추를 보인다
+// 대기 켜기·끄기 — 대기가 있는 천체(HAS_ATMO)에 다가가 있을 때만 단추를 보인다
 const atmoBtn = document.getElementById('atmo');
 const atmoStateEl = document.getElementById('atmo-state');
 const surfaceTex = {}; // key → Promise<Texture>
@@ -799,9 +868,9 @@ function applyAtmosphere() {
   }
 }
 atmoBtn.addEventListener('click', () => { state.atmosphere = !state.atmosphere; applyAtmosphere(); updateAtmoButton(); });
-// 표면이 가려진 천체에 다가가 있을 때 단추를 보인다. 대기를 끈 채로 떠나면 다시 켤 수 있게 계속 보인다
+// 대기가 있는 천체에 다가가 있을 때 단추를 보인다. 대기를 끈 채로 떠나면 다시 켤 수 있게 계속 보인다
 function updateAtmoButton() {
-  atmoBtn.hidden = !!state.fly || (state.atmosphere && !(state.focus in SURFACE_UNDER));
+  atmoBtn.hidden = !!state.fly || (state.atmosphere && !HAS_ATMO.has(state.focus));
 }
 
 // ---------- 레이어 창(오른쪽) ----------
@@ -831,7 +900,7 @@ legend.innerHTML = [...GROUP_NAMES.map((n, i) => [n, GROUP_COLORS[i]]), ['오르
   for (const k of ['belt', 'kuiper', 'oort']) lyList.appendChild(layerItem(k));
   lyList.append(layerItem('groupColors', true), legend); // 무리 전체(소행성대~오르트 구름)에 걸리는 색 구분
   sec('표시');
-  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations']) lyList.appendChild(layerItem(k));
+  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights']) lyList.appendChild(layerItem(k));
 }
 function setLayers(patch) {
   Object.assign(state.layers, patch);
@@ -1318,11 +1387,12 @@ function drawCompare() {
     const x = i ? L.xB : L.xA;
     it.obj.position.set((x - W / 2) / L.s, (H / 2 - L.y) / L.s, 0);
     it.obj.updateMatrixWorld();
-    // 토성: 고리 셰이더·고리 그림자가 쓰는 해·카메라 방향을 이 장면 것으로(본 장면은 다음 step에서 되돌린다)
-    if (it.b.key === 'saturn') {
+    // 토성 고리·지구 밤 불빛이 쓰는 해·카메라 방향을 이 장면 것으로(재질을 본 장면과 함께 쓴다 — 본 장면은 다음 step에서 되돌린다)
+    const U = it.b.key === 'saturn' ? ringU : it.b.key === 'earth' ? earthU : null;
+    if (U) {
       qInv.copy(it.obj.quaternion).invert();
-      ringU.uSunL.value.copy(cmpLight.position).normalize().applyQuaternion(qInv);
-      ringU.uCamL.value.copy(cmpCam.position).sub(it.obj.position).applyQuaternion(qInv);
+      U.uSunL.value.copy(cmpLight.position).normalize().applyQuaternion(qInv);
+      U.uCamL.value.copy(cmpCam.position).sub(it.obj.position).applyQuaternion(qInv);
     }
     const { tag, ring } = cmpTags[i];
     // 이름표는 천체 밑 가운데 — 화면 끝에서 잘리면 안쪽으로 당긴다
@@ -1580,6 +1650,7 @@ function step(now = performance.now()) {
   if (state.tool === 'size') return; // 크기 비교 중에는 본 장면을 그리지 않는다 — 위치·시각만 이어 간다
   updateClouds(jd);
   updateComets(jd);
+  updateEarthAtmo();
   updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateSky(updateGroupLabels(updateLabels()));
   updateDist();

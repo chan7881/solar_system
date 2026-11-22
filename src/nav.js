@@ -70,6 +70,7 @@ export const LAYERS = [
   { key: 'orbits', name: '궤도', on: true },
   { key: 'labels', name: '이름표', on: true },
   { key: 'icons', name: '아이콘', on: true },
+  { key: 'nightLights', name: '지구 밤 불빛', on: true },
 ];
 export const defaultLayers = () => Object.fromEntries(LAYERS.map(l => [l.key, l.on]));
 
