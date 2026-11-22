@@ -1661,7 +1661,7 @@ function flareState() {
   const vis = p ? visibleFraction([cam.x, cam.y, cam.z], [sp.x, sp.y, sp.z], sun.reach, occluders()) : 0;
   const gain = flareGain(p, W, H, dist, sun.reach, camera.fov, vis, rs);
   const bloom = bloomGain(p, W, H, dist, sun.reach, vis, rs);
-  return { p, c, W, H, Hv, rs, vis, gain, bloom };
+  return { p, c, W, H, Hv, rs, vis, gain, bloom, dist };
 }
 function drawFlare() {
   if (!state.layers.sunFlare || state.tool) return;
@@ -1670,11 +1670,11 @@ function drawFlare() {
   flareU.uSun.value.set(f.p[0], f.H - f.p[1]);
   flareU.uH.value = f.Hv;
   flareU.uRs.value = f.rs;
-  flareU.uCore.value = coreSigma(f.rs, f.Hv);
+  flareU.uCore.value = coreSigma(f.rs, f.Hv, f.dist);
   flareU.uGain.value = f.gain;
   flareU.uGhostGain.value = 0.35 * f.gain;
   flareU.uBloom.value = f.bloom;
-  flareU.uSig.value = bloomScales(f.rs, f.Hv);
+  flareU.uSig.value = bloomScales(f.rs, f.Hv, f.dist);
   ghosts(f.p, f.c, f.Hv).forEach((g, i) => flareU.uG.value[i].set(g.x, f.H - g.y, g.r, g.a));
   const ac = renderer.autoClear;
   renderer.autoClear = false;

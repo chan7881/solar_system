@@ -46,17 +46,20 @@ export const BLOOM = [
   { a: 0.3, b: 0.1, k: 0.2, color: [1.0, 0.82, 0.62] },
   { a: 0.5, b: 0.22, k: 0.07, color: [0.95, 0.75, 0.62] },
 ];
-// 번짐의 「화면 높이 몫」은 원반이 점일 때만 온전하다(점이어도 보여야 하니까). 원반이 커져 실제 각크기가 눈에 보이면
-// 그 몫을 GLOW_SHRINK_MIN까지 줄여 원반의 실제 크기가 우선하게 한다 — rs/Hv가 0.0005(≈0.5px/1000px)부터 줄기 시작해 0.005(≈5px)에서 끝.
+// 번짐의 「화면 높이 몫」은 원반이 점이든 5px이든 같은 몫(GLOW_SHRINK_MIN)이다 — 예전엔 원반이 5px보다 작을수록 몫이 커져(최대 3.3배)
+// 멀리서 번짐이 원반 각크기보다 훨씬 컸다. 거기에 태양이 1AU보다 멀면 받는 빛이 1/거리²로 줄어드는 만큼 번짐 폭도 줄인다
+// (사진기 점광원의 번진 반지름은 밝기의 로그로 변한다): (1AU/거리)^GLOW_DIST_EXP, 하한 GLOW_DIST_MIN. 거리를 안 주면 1AU(줄임 없음).
 export const GLOW_SHRINK_MIN = 0.3;
-export function glowShrink(rs, Hv) {
-  const t = Math.min(1, Math.max(0, (rs / Hv - 0.0005) / (0.005 - 0.0005)));
-  return 1 - (1 - GLOW_SHRINK_MIN) * t * t * (3 - 2 * t);
+export const GLOW_DIST_EXP = 0.3;
+export const GLOW_DIST_MIN = 0.25;
+export function glowShrink(rs, Hv, dist = AU_KM) {
+  const f = dist > AU_KM ? Math.max(GLOW_DIST_MIN, (AU_KM / dist) ** GLOW_DIST_EXP) : 1;
+  return GLOW_SHRINK_MIN * f;
 }
-export function bloomScales(rs, Hv) { const k = glowShrink(rs, Hv); return BLOOM.map(g => g.a * rs + g.b * Hv * k); }
+export function bloomScales(rs, Hv, dist = AU_KM) { const k = glowShrink(rs, Hv, dist); return BLOOM.map(g => g.a * rs + g.b * Hv * k); }
 // 넘친 핵(하얗게 찬 둥근 자리)의 가우스 폭(px): 같은 규칙으로 줄인다
 export const CORE_SIGMA = 0.032;
-export function coreSigma(rs, Hv) { return CORE_SIGMA * Hv * glowShrink(rs, Hv); }
+export function coreSigma(rs, Hv, dist = AU_KM) { return CORE_SIGMA * Hv * glowShrink(rs, Hv, dist); }
 // 원반 반지름(px): 거리 dist에서 반지름 sunR의 각반지름을, 세로 화각 fovY·화면 높이 H(px)로 옮긴다
 export function sunRadiusPx(dist, sunR, fovY, H) {
   if (!(dist > sunR)) return Infinity;
