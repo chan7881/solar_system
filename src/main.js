@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation, raDecToScene } from './ephemeris.js';
-import { RING_EDGES, RING_ALBEDO, ringMipLevels } from './rings.js';
+import { RING_EDGES, ringMipLevels } from './rings.js';
+import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, ringAlbedoGLSL } from './rings_glsl.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
@@ -132,7 +133,7 @@ const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
 for (const k of SHAPED) loadShape(byKey[k]);
 
 // ---------- 토성 고리 ----------
-// 토성 몸체의 자식으로 적도면(로컬 XZ)에 둔다. 밝기·비침·그림자 식은 src/rings.js와 같다(테스트는 그쪽에).
+// 토성 몸체의 자식으로 적도면(로컬 XZ)에 둔다. 밝기·비침·그림자 식은 src/rings_glsl.js(테스트가 src/rings.js와 대조).
 // 계산은 토성 로컬 좌표(km): 고리면 법선 = +Y, 해·카메라 방향은 매 장면 CPU에서 로컬로 바꿔 넣는다.
 const ringU = {
   uTau: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
@@ -146,6 +147,8 @@ const RING_GLSL = /* glsl */`
     if (r < uR0 || r > uR1) return 0.0;
     return texture2D(uTau, vec2((r - uR0) / (uR1 - uR0), 0.5)).r;
   }`;
+// 색(tint)은 사진을 보고 고른 화면 색(sRGB)이라 선형 값으로 바꿔 넣는다
+const RING_ALBEDO_GLSL = ringAlbedoGLSL(t => { const c = new THREE.Color().setRGB(...t, THREE.SRGBColorSpace); return [c.r, c.g, c.b]; });
 const ringMat = new THREE.ShaderMaterial({
   uniforms: ringU,
   transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -164,6 +167,8 @@ const ringMat = new THREE.ShaderMaterial({
     #include <common>
     #include <logdepthbuf_pars_fragment>
     ${RING_GLSL}
+    ${RING_LIGHT_GLSL}
+    ${RING_ALBEDO_GLSL}
     uniform vec3 uCamL; uniform float uRe, uRp, uLight;
     varying vec3 vP;
     void main() {
@@ -172,29 +177,14 @@ const ringMat = new THREE.ShaderMaterial({
       float tau = ringTau(r);
       if (tau <= 0.0) discard;
       vec3 v = normalize(uCamL - vP);
-      float mu = max(1e-3, abs(v.y)), mu0 = max(1e-3, abs(uSunL.y));
-      float T = exp(-tau / mu);
-      float F;
-      if (v.y * uSunL.y > 0.0) F = 2.0 * mu0 / (mu + mu0) * (1.0 - exp(-tau * (1.0 / mu + 1.0 / mu0)));
-      else if (abs(mu - mu0) < 1e-4) F = 2.0 * tau / mu * T;
-      else F = 2.0 * mu0 / (mu - mu0) * (T - exp(-tau / mu0));
-      // 토성 그림자(해 쪽으로 간 빛줄기가 회전 타원체 몸체에 막힘) — y를 늘여 구 문제로 바꾼다(src/rings.js inPlanetShadow)
-      vec3 pp = vec3(vP.x, vP.y * uRe / uRp, vP.z), ss = vec3(uSunL.x, uSunL.y * uRe / uRp, uSunL.z);
-      float qa = dot(ss, ss), qb = dot(pp, ss);
-      if (qb < 0.0 && qb * qb - qa * (dot(pp, pp) - uRe * uRe) > 0.0) F = 0.0;
-      // 고리별 반사율·색(src/rings.js RING_ALBEDO)
-      vec4 a = r < ${RING_EDGES.cb.toFixed(1)} ? vec4(${albedoVec(0)})
-             : r < ${RING_EDGES.bOut.toFixed(1)} ? vec4(${albedoVec(1)})
-             : r < ${RING_EDGES.aIn.toFixed(1)} ? vec4(${albedoVec(2)}) : vec4(${albedoVec(3)});
+      vec2 tf = ringView(tau, v, uSunL);
+      float T = tf.x, F = tf.y;
+      if (inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0; // 토성 그림자
+      vec4 a = ringAlbedo(r);
       gl_FragColor = vec4(a.rgb * a.a * F * uLight, 1.0 - T);
       #include <colorspace_fragment>
     }`,
 });
-// 색(tint)은 사진을 보고 고른 화면 색(sRGB)이라 선형 값으로 바꿔 넣는다
-function albedoVec(i) {
-  const { w, tint } = RING_ALBEDO[i], c = new THREE.Color().setRGB(...tint, THREE.SRGBColorSpace);
-  return [c.r, c.g, c.b, w].map(x => x.toFixed(4)).join(', ');
-}
 const ringMesh = new THREE.Mesh(new THREE.BufferGeometry(), ringMat);
 ringMesh.visible = false;
 byKey.saturn.mesh.add(ringMesh);
@@ -204,11 +194,11 @@ byKey.saturn.mesh.add(ringMesh);
 byKey.saturn.mesh.material.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, { uTau: ringU.uTau, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL });
   sh.vertexShader = 'varying vec3 vP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
-  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n` + sh.fragmentShader.replace('#include <lights_fragment_end>', `
+  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n${RING_SHADOW_GLSL}\n` +sh.fragmentShader.replace('#include <lights_fragment_end>', `
     #include <lights_fragment_end>
-    if (vP.y * uSunL.y < 0.0 && abs(uSunL.y) > 1e-6) {
-      vec3 q = vP - uSunL * (vP.y / uSunL.y);
-      float ringT = exp(-ringTau(length(q.xz)) / abs(uSunL.y));
+    float ringR = ringShadowRadius(vP, uSunL);
+    if (ringR >= 0.0) {
+      float ringT = ringShadowT(ringTau(ringR), uSunL.y);
       reflectedLight.directDiffuse *= ringT;
       reflectedLight.directSpecular *= ringT;
     }`);

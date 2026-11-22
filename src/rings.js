@@ -1,4 +1,4 @@
-// 토성 고리 — 단면(광학 깊이)과 밝기·투과·그림자. three.js 없는 순수 함수(셰이더 src/main.js가 같은 식을 쓴다).
+// 토성 고리 — 단면(광학 깊이)과 밝기·투과·그림자. three.js 없는 순수 함수(셰이더 식은 src/rings_glsl.js — 식을 고치면 둘 다, tests/rings_glsl.test.mjs가 대조).
 // 단면: textures/saturn_rings.json (Cassini RSS 엄폐, tools/make_rings.py)
 
 // 고리 경계(km) — 반사율을 가르고 고리를 그릴 범위를 정한다. C 안쪽(74,491)·A 바깥(136,774)은 이 단면에서 잰 값과 같다.
@@ -49,7 +49,7 @@ export function ringLight(tau, mu, mu0, sameSide) {
 }
 
 // 점 p에서 해 쪽(단위 벡터 s)으로 간 빛줄기가 원점 중심 회전 타원체(적도 R, 극 Rp, 극축 = y)에 막히는가 — 행성이 고리에 드리우는 그림자.
-// y를 R/Rp배 늘이면 반지름 R인 구 문제가 된다(셰이더 src/main.js도 같은 식). Rp를 빼면 구.
+// y를 R/Rp배 늘이면 반지름 R인 구 문제가 된다(셰이더 src/rings_glsl.js도 같은 식). Rp를 빼면 구.
 export function inPlanetShadow(p, s, R, Rp = R) {
   const k = R / Rp;
   const P = [p[0], p[1] * k, p[2]], S = [s[0], s[1] * k, s[2]];
@@ -61,15 +61,27 @@ export function inPlanetShadow(p, s, R, Rp = R) {
 }
 
 // 행성 표면의 점 p에서 해 쪽(s)으로 간 빛줄기가 고리면(원점을 지나고 법선 n)을 지나는 곳의 반지름 — 고리가 행성에 드리우는 그림자
-// 고리면에 닿지 않으면(해가 같은 쪽에 있거나 고리면과 나란하면) null
+// 고리면에 닿지 않으면(해가 같은 쪽에 있거나 고리면과 거의 나란하면 — |s·n| < 1e-6) null
+// 문턱 1e-6: 셰이더가 mediump(최소 정규수 약 6e-5에 가까운 정밀도)여도 0으로 나누지 않게
 export function ringShadowRadius(p, s, n) {
   const pn = p[0] * n[0] + p[1] * n[1] + p[2] * n[2];
   const sn = s[0] * n[0] + s[1] * n[1] + s[2] * n[2];
-  if (Math.abs(sn) < 1e-9) return null;
+  if (Math.abs(sn) < 1e-6) return null;
   const t = -pn / sn;
   if (t <= 0) return null;
   const q = [p[0] + s[0] * t, p[1] + s[1] * t, p[2] + s[2] * t];
   return Math.hypot(q[0], q[1], q[2]);
+}
+
+// 고리 그림자 속 햇빛의 몫 — 해 방향과 고리면 법선 사이 |cos|가 sn일 때 비스듬히 지나는 광학 깊이 τ/|sn|
+export function ringShadowT(tau, sn) {
+  return Math.exp(-tau / Math.abs(sn));
+}
+
+// 고리 한 점을 보는 방향 v·해 방향 s(단위 벡터, 법선 n)로 본 모습 — 같은 면에서 보는지는 두 방향이 고리면의 같은 쪽에 있는가
+export function ringView(tau, v, s, n = [0, 1, 0]) {
+  const vn = v[0] * n[0] + v[1] * n[1] + v[2] * n[2], sn = s[0] * n[0] + s[1] * n[1] + s[2] * n[2];
+  return ringLight(tau, vn, sn, vn * sn > 0);
 }
 
 // 밉맵 단계 — 이웃 두 칸을 투과율 exp(−τ)로 평균해 반씩 줄인다(마지막은 1칸). 0단계는 원래 단면
