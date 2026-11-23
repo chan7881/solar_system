@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { orbitOf, basisFromAngles, elementsFromState, apsisNames, orbitCenter, orbitMarks, orbitView, orbitFit, ellipsePoint } from '../src/orbit.js';
+import { orbitOf, basisFromAngles, elementsFromState, apsisNames, orbitCenter, orbitMarks, orbitView, orbitFit, ellipsePoint, orbitPeriodYears, periodText } from '../src/orbit.js';
 import { julianDateTT } from '../src/ephemeris.js';
 
 const H = JSON.parse(fs.readFileSync(new URL('./horizons_orbit.json', import.meta.url), 'utf8'));
@@ -134,4 +134,33 @@ test('천체의 지금 위치가 그린 타원 위에 있다(근점 방향까지
       assert.ok(Math.abs(dot(r, o.W)) / len(r) < tol, `${k} 궤도면 밖 ${dot(r, o.W) / len(r)}`);
     }
   }
+});
+
+// 공전 주기 — 관측으로 알려진 항성 공전 주기(일; NASA Planetary Fact Sheet · JPL SSD Planetary/Satellite Mean Elements·Physical Parameters)와 대조.
+// 허용 오차(%)는 2026-11-23 실측 차이의 약 2배 이상 — 달·미마스·엔셀라두스·테티스는 접촉(순간) 요소의 주기가 평균 주기와 달라서, 명왕성·마케마케·에리스는 Horizons 접촉 요소라서 크다.
+const OBS_DAYS = { mercury: 87.969, venus: 224.701, earth: 365.256, mars: 686.980, jupiter: 4332.589, saturn: 10759.22, uranus: 30685.4, neptune: 60189,
+  pluto: 90560, ceres: 1681.6, eris: 203830, haumea: 103410, makemake: 111845, moon: 27.321661, phobos: 0.31891, deimos: 1.26244, io: 1.769138,
+  europa: 3.551181, ganymede: 7.154553, callisto: 16.689017, mimas: 0.942422, enceladus: 1.370218, tethys: 1.887802, dione: 2.736915, rhea: 4.5175,
+  titan: 15.945421, hyperion: 21.276609, iapetus: 79.3215, miranda: 1.413479, ariel: 2.520379, umbriel: 4.144176, titania: 8.705867, oberon: 13.463234,
+  triton: 5.876854, charon: 6.38723 };
+const WIDE = { mercury: 0.01, venus: 0.01, earth: 0.01, mars: 0.01, jupiter: 0.01, // 안쪽 행성·목성은 0.01% 안(태양+행성계 질량을 쓴 효과가 0.05%라 이래야 가려진다)
+  pluto: 1.0, makemake: 1.2, eris: 0.5, moon: 0.7, mimas: 0.8, enceladus: 0.45, tethys: 0.3 };
+test('공전 주기: 관측된 항성 공전 주기와 맞는다', () => {
+  const jd = julianDateTT(Date.UTC(2026, 10, 23));
+  for (const [k, d] of Object.entries(OBS_DAYS)) {
+    const got = orbitPeriodYears(orbitOf(k, jd)) * 365.25, pct = Math.abs(got / d - 1) * 100;
+    assert.ok(pct < (WIDE[k] ?? 0.12), `${k} 주기 ${got}일 ↔ 관측 ${d}일 (${pct.toFixed(3)}%)`);
+  }
+});
+
+test('주기 글자: 1년 이상 년 · 1년 미만 일 · 1일 미만 시간, 소수점 넷째', () => {
+  assert.equal(periodText(1), '1.0000년');
+  assert.equal(periodText(11.8618), '11.8618년');
+  assert.equal(periodText(0.999), '364.8847일');
+  assert.equal(periodText(87.969 / 365.25), '87.9690일');
+  assert.equal(periodText(1 / 365.25), '1.0000일');
+  assert.equal(periodText(0.99999 / 365.25), '23.9998시간');
+  assert.equal(periodText(0.9999999 / 365.25), '1.0000일'); // 반올림하면 24시간 → 일
+  assert.equal(periodText(0.99999999), '1.0000년'); // 반올림하면 365.25일 → 년
+  assert.equal(periodText(0.31891 / 365.25), '7.6538시간');
 });

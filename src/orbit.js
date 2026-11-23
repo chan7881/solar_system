@@ -5,6 +5,7 @@
 import { elementsAt, AU_KM } from './ephemeris.js';
 import { smallBodyElements, isSmallBody } from './smallbodies.js';
 import { MOONS, PLANET_GM, moonGeocentric, moonMeanElements } from './moons.js';
+import { GM_SUN } from './comets.js';
 
 const DEG = Math.PI / 180;
 const MOON_BY_KEY = Object.fromEntries(MOONS.map(m => [m.key, m]));
@@ -70,6 +71,24 @@ export function orbitOf(key, jd) {
   }
   const { a, e } = o;
   return { key, center: orbitCenter(key), a, e, b: a * Math.sqrt(1 - e * e), peri: a * (1 - e), apo: a * (1 + e), P: o.P, Q: o.Q, W: o.W };
+}
+
+// 공전 주기(율리우스년 = 365.25일) — 케플러 제3법칙 2π√(a³/μ). μ는 중심 천체 GM(위성은 모행성 + 위성)
+export const JULIAN_YEAR_S = 365.25 * 86400;
+// 태양 둘레는 μ = 태양 + 그 행성계(위성 포함) GM(km³/s², JPL DE440) — 목성은 이것이 주기를 약 0.05% 바꾼다. 왜행성·혜성은 태양만
+const SYSTEM_GM = { mercury: 22031.868, venus: 324858.592, earth: 403503.236, mars: 42828.376, jupiter: 126712764.1, saturn: 37940584.8, uranus: 5794556.4, neptune: 6836527.1 };
+export function orbitPeriodYears(o) {
+  const mu = o.center === 'sun' ? GM_SUN + (SYSTEM_GM[o.key] ?? 0) : PLANET_GM[o.center] + (MOON_BY_KEY[o.key]?.gm ?? 0);
+  return 2 * Math.PI * Math.sqrt(o.a ** 3 / mu) / JULIAN_YEAR_S;
+}
+
+// 주기 글자 — 1년 이상 '년', 1년 미만 '일', 1일 미만 '시간'. 모두 소수점 넷째 자리(율리우스년 365.25일)
+export function periodText(years) {
+  const days = years * 365.25, hours = days * 24, r4 = x => Number(x.toFixed(4));
+  // 단위는 반올림한 값으로 고른다 — 경계 바로 아래(23.99998시간)가 '24.0000시간'으로 찍히지 않게
+  if (r4(years) >= 1) return `${years.toFixed(4)}년`;
+  if (r4(hours) >= 24) return `${days.toFixed(4)}일`;
+  return days >= 1 ? `${days.toFixed(4)}일` : `${hours.toFixed(4)}시간`;
 }
 
 // 타원 위의 점(중심 천체 기준) — 이심 근점 이각 E(rad)

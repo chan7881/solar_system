@@ -12,7 +12,7 @@ import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples,
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
 import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { refDistance, lightScale } from './exposure.js';
-import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter } from './orbit.js';
+import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
 const TRAIL_N = 360;
@@ -1238,7 +1238,7 @@ const kmAU = km => { const au = fmtAU(km, AU_KM); return `<b>${fmtKm(km)}</b>${a
 // 카드 값과 근점·원점 글자 — 바뀔 때만 다시 쓴다
 function orbitCard(o, jd) {
   const [pk, ak] = apsisNames(o.center);
-  const vals = [o.a, o.b, o.peri, o.apo].map(kmAU), e = o.e.toFixed(4), note = `${fmtDay(jd)} 기준 궤도`;
+  const vals = [o.a, o.b, o.peri, o.apo].map(kmAU), e = `${o.e.toFixed(4)} · 주기 ${periodText(orbitPeriodYears(o))}`, note = `${fmtDay(jd)} 기준 궤도`;
   const s = [...vals, e, pk, ak, note].join('|');
   if (s === lastOrbit) return;
   lastOrbit = s;
