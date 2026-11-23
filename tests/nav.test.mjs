@@ -119,3 +119,7 @@ test('레이어: 위성은 모행성을 따르고, 꺼도 보고 있는 계는 �
   assert.equal(d.groupColors, false); // 색 구분은 처음엔 꺼짐(흰 점)
   assert.equal(d.constellations, false);
 });
+
+test('「그림자」 레이어는 처음 켜져 있다', () => {
+  assert.equal(defaultLayers().shadows, true);
+});

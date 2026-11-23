@@ -176,12 +176,14 @@ body.sb-open #sb-open { display: none; }
   line-height: 18px; color: #c6cfdc; pointer-events: none; text-shadow: 0 0 3px #000, 0 0 6px #000; }
 
 /* ---------- 도구(거리 재기·크기 비교) ---------- */
-#tools { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(var(--panel-h) + 12px + 48px + 8px);
+/* 도구 단추는 레이어 단추(48px) 왼쪽에 가로로 나란히 — 도구·레이어 순 */
+#tools { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 48px + 8px); bottom: calc(var(--panel-h) + 12px);
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 1; }
 #tools button { min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 10px; border: 1px solid var(--line);
   border-radius: 12px; background: var(--panel); font-size: 14px; cursor: pointer; }
 #tools button:hover { background: #1b2230; }
 #tools #tool-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; }
+#tools #tool-btn { min-height: 48px; }
 #tool-btn .caret { width: 16px; height: 16px; transition: transform .15s; }
 #tool-btn[aria-expanded="true"] .caret { transform: rotate(180deg); }
 #tool-btn[aria-pressed="true"] .caret { display: none; }

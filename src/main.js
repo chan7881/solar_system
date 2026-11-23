@@ -150,10 +150,12 @@ const ringU = {
   uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
   uRe: { value: byKey.saturn.re }, uRp: { value: byKey.saturn.rp }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
   uExpo: byKey.saturn.expo,
+  uShadowOn: { value: 1 }, // 「그림자」 레이어 — 토성 그림자(고리 위)·고리 그림자(토성 위)
 };
+const flatU = { value: 0 }; // 「그림자」를 끄면 1 — 모든 천체의 밤면을 N·L = 0.5 밝기까지 끌어올린다
 const RING_GLSL = /* glsl */`
   uniform sampler2D uTau; uniform float uR0, uR1;
-  uniform vec3 uSunL;
+  uniform vec3 uSunL; uniform float uShadowOn;
   float ringTau(float r) {
     if (r < uR0 || r > uR1) return 0.0;
     return texture2D(uTau, vec2((r - uR0) / (uR1 - uR0), 0.5)).r;
@@ -190,7 +192,7 @@ const ringMat = new THREE.ShaderMaterial({
       vec3 v = normalize(uCamL - vP);
       vec2 tf = ringView(tau, v, uSunL);
       float T = tf.x, F = tf.y;
-      if (inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0; // 토성 그림자
+      if (uShadowOn > 0.5 && inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0; // 토성 그림자
       vec4 a = ringAlbedo(r);
       gl_FragColor = vec4(a.rgb * a.a * F * uLight * uExpo, 1.0 - T);
       #include <colorspace_fragment>
@@ -206,12 +208,12 @@ ringMesh.renderOrder = 2.5;
 // 토성 표면에 지는 고리 그림자: 표면 점에서 해 쪽 빛줄기가 고리면을 지나는 반지름의 τ로 햇빛을 줄인다.
 // 햇빛(직접광)에만 곱한다 — 주변광은 남겨 밤 쪽과 같은 방식으로 어두워지게(해는 유일한 직접광)
 byKey.saturn.mesh.material.onBeforeCompile = sh => {
-  Object.assign(sh.uniforms, { uTau: ringU.uTau, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL });
+  Object.assign(sh.uniforms, { uTau: ringU.uTau, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL, uShadowOn: ringU.uShadowOn });
   sh.vertexShader = 'varying vec3 vP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
   sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n${RING_SHADOW_GLSL}\n` +sh.fragmentShader.replace('#include <lights_fragment_end>', `
     #include <lights_fragment_end>
     float ringR = ringShadowRadius(vP, uSunL);
-    if (ringR >= 0.0) {
+    if (uShadowOn > 0.5 && ringR >= 0.0) {
       float ringT = ringShadowT(ringTau(ringR), uSunL.y);
       reflectedLight.directDiffuse *= ringT;
       reflectedLight.directSpecular *= ringT;
@@ -238,7 +240,7 @@ byKey.neptune.mesh.material.onBeforeCompile = sh => {
 // 법선은 타원체 면의 법선이라 셰이더의 mu가 측지 위도 기준 sin(태양 고도)와 같다(tests/atmosphere.test.mjs의 sunMu와 같은 값).
 const srgb = (r, g, b) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
 const earthU = {
-  uExpo: byKey.earth.expo,
+  uExpo: byKey.earth.expo, uFlat: flatU,
   uSunL: { value: new THREE.Vector3(1, 0, 0) },
   uCamL: { value: new THREE.Vector3(0, 0, 1) },
   uNight: { value: null },
@@ -321,13 +323,14 @@ const cloudMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * CLOUD_K, byK
   fragmentShader: /* glsl */`
     #include <common>
     #include <logdepthbuf_pars_fragment>
-    uniform sampler2D uCloud; uniform vec3 uSunL; uniform float uCloudOpacity, uExpo;
+    uniform sampler2D uCloud; uniform vec3 uSunL; uniform float uCloudOpacity, uExpo, uFlat;
     varying vec3 vN; varying vec2 vUvC;
     void main() {
       #include <logdepthbuf_fragment>
       float a = texture2D(uCloud, vUvC).r * uCloudOpacity;
       float mu = dot(normalize(vN), uSunL);
       float day = smoothstep(-0.1, 0.35, mu);
+      if (uFlat > 0.5) { day = max(day, 0.5); mu = max(mu, 0.5); }
       vec3 tint = mix(vec3(1.0, 0.5, 0.28), vec3(1.0, 0.99, 0.97), smoothstep(0.0, 0.25, mu));
       vec3 col = tint * (0.012 + 0.9 * day) * uExpo;
       gl_FragColor = vec4(col, a);
@@ -343,7 +346,7 @@ function updateEarthAtmo() {
   atmoMesh.visible = m.visible && state.atmosphere;
   earthU.uCloudOn.value = earthU.uCloud.value && state.atmosphere ? 1 : 0; // 「대기」 스위치와 함께 켜고 끈다
   cloudMesh.visible = m.visible && earthU.uCloudOn.value === 1;
-  earthU.uNightOn.value = earthU.uNight.value && state.layers.nightLights ? 1 : 0;
+  earthU.uNightOn.value = earthU.uNight.value && state.layers.nightLights && state.layers.shadows ? 1 : 0; // 그림자 끔(밤면을 밝힘)이면 밤 불빛도 안 켠다
   if (!m.visible) return;
   qInv.copy(m.quaternion).invert();
   earthU.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
@@ -971,7 +974,7 @@ legend.innerHTML = [...GROUP_NAMES.map((n, i) => [n, GROUP_COLORS[i]]), ['오르
   for (const k of ['belt', 'kuiper', 'oort']) lyList.appendChild(layerItem(k));
   lyList.append(layerItem('groupColors', true), legend); // 무리 전체(소행성대~오르트 구름)에 걸리는 색 구분
   sec('표시');
-  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights', 'sunFlare']) lyList.appendChild(layerItem(k));
+  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights', 'shadows', 'sunFlare']) lyList.appendChild(layerItem(k));
 }
 function setLayers(patch) {
   Object.assign(state.layers, patch);
@@ -983,6 +986,8 @@ function setLayers(patch) {
   }
   legend.hidden = !L.groupColors;
   document.body.classList.toggle('ui-off', !L.ui);
+  ringU.uShadowOn.value = L.shadows ? 1 : 0;
+  flatU.value = L.shadows ? 0 : 1;
   paintCloud();
 }
 const setLayer = (key, on) => setLayers({ [key]: on });
@@ -1780,9 +1785,11 @@ for (const b of bodies) {
   const mat = b.mesh.material, prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (sh, r) => {
     if (prev) prev(sh, r);
-    sh.uniforms.uExpo = b.expo;
-    sh.fragmentShader = 'uniform float uExpo;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>',
-      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular *= uExpo;');
+    sh.uniforms.uExpo = b.expo; sh.uniforms.uFlat = flatU;
+    sh.fragmentShader = 'uniform float uExpo; uniform float uFlat;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>',
+      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular *= uExpo;\n' +
+      // 그림자 끔: 밤면(N·L이 작은 곳)을 N·L = 0.5 밝기까지 끌어올린다. 낮 쪽은 그대로, 경계는 이어진다(해 빛 세기 3은 PointLight와 같은 눈금)
+      'if (uFlat > 0.5) reflectedLight.directDiffuse = max(reflectedLight.directDiffuse, diffuseColor.rgb * (1.5 / PI) * uExpo);');
   };
   mat.customProgramCacheKey = () => 'expo:' + b.key;
 }
