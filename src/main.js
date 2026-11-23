@@ -1238,12 +1238,12 @@ const kmAU = km => { const au = fmtAU(km, AU_KM); return `<b>${fmtKm(km)}</b>${a
 // 카드 값과 근점·원점 글자 — 바뀔 때만 다시 쓴다
 function orbitCard(o, jd) {
   const [pk, ak] = apsisNames(o.center);
-  const vals = [o.a, o.b, o.peri, o.apo].map(kmAU), e = `${o.e.toFixed(4)} · 주기 ${periodText(orbitPeriodYears(o))}`, note = `${fmtDay(jd)} 기준 궤도`;
+  const vals = [o.a, o.b, o.peri, o.apo].map(kmAU), e = `<span>${o.e.toFixed(4)}</span><span class="orb-per">주기 ${periodText(orbitPeriodYears(o))}</span>`, note = `${fmtDay(jd)} 기준 궤도`;
   const s = [...vals, e, pk, ak, note].join('|');
   if (s === lastOrbit) return;
   lastOrbit = s;
   [orbOut.a.innerHTML, orbOut.b.innerHTML, orbOut.peri.innerHTML, orbOut.apo.innerHTML] = vals;
-  orbOut.e.textContent = e;
+  orbOut.e.innerHTML = e;
   orbOut.periK.textContent = pk; orbOut.apoK.textContent = ak;
   orbOut.note.textContent = note;
   orbTags.peri.innerHTML = `${pk}<span>${fmtKm(o.peri)}</span>`;
