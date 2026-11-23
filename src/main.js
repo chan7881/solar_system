@@ -218,6 +218,20 @@ byKey.saturn.mesh.material.onBeforeCompile = sh => {
     }`);
 };
 
+// ---------- 해왕성 대흑점(GDS-89) 무늬 레이어 ----------
+// Voyager 2 사진 PIA00046(1989-08-20)에서 띠 지도와의 차이만 뽑은 RGBA(textures/neptune_gds_2k.png, tools/make_neptune_gds.py).
+// 띠 지도 위에 알파로 얹는다 — 1989년 모습 그대로 고정(대흑점은 1996년 이전에 사라졌다). 시간을 돌려도 같은 자리, 같은 모양.
+const gdsU = { uGds: { value: null }, uGdsOn: { value: 0 } };
+loadTexture('textures/neptune_gds_2k.png').then(tex => { gdsU.uGds.value = tex; gdsU.uGdsOn.value = 1; },
+  () => console.warn('대흑점 무늬를 못 불러옴 — 띠만 둔다'));
+byKey.neptune.mesh.material.onBeforeCompile = sh => {
+  sh.uniforms.uGds = gdsU.uGds; sh.uniforms.uGdsOn = gdsU.uGdsOn;
+  sh.vertexShader = 'varying vec2 vUvG;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvUvG = uv;');
+  sh.fragmentShader = 'varying vec2 vUvG; uniform sampler2D uGds; uniform float uGdsOn;\n' + sh.fragmentShader.replace('#include <map_fragment>', `
+    #include <map_fragment>
+    if (uGdsOn > 0.5) { vec4 g = texture2D(uGds, vUvG); diffuseColor.rgb = mix(diffuseColor.rgb, g.rgb, g.a); }`);
+};
+
 // ---------- 지구 밤 불빛·대기 가장자리 빛 (src/atmosphere.js) ----------
 // 둘 다 지구 고정 좌표에서 계산한다 — 태양 방향(uSunL)·카메라(uCamL)를 지구 회전의 역으로 돌려 넣는다(updateEarthAtmo).
 // 밤 불빛: NASA Black Marble 2016 흑백 세기(textures/earth_night_2k.jpg)에 나트륨등 색을 입혀 낮 쪽에서는 0, 박명을 지나 다 켜진다.
