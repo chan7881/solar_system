@@ -152,13 +152,14 @@ test('후광 세기: 원반이 화면을 채워 렌즈 효과가 꺼져도 남�
   assert.ok(exposure(30 * AU_KM, SUN_R) < exposure(AU_KM, SUN_R));
 });
 
-test('후광 세기: 원반이 커질수록 약해지되 꺼지지 않는다', () => {
+test('후광 세기: 원반이 커질수록 약해지다 사라진다', () => {
   const W = 1600, H = 1000, p = [800, 500], d = SUN_R * 3;
   const g = [0, 40, 80, 120, 160, 250].map(rs => bloomGain(p, W, H, d, SUN_R, 1, rs));
   close(g[0], g[1], 1e-12, '작은 원반은 그대로');
   for (let i = 2; i < g.length; i++) assert.ok(g[i] < g[i - 1], g.join());
-  close(g[5], BLOOM_NEAR_MIN * exposure(d, SUN_R), 1e-12, '큰 원반은 최솟값');
-  assert.ok(g[5] > 0 && BLOOM_NEAR_MIN < 1);
+  assert.equal(g[5], 0, '큰 원반(반높이의 0.5)은 0');
+  assert.ok(g[3] > 0.1 && g[3] < 0.9, `중간(반높이의 0.24)은 반쯤: ${g[3]}`);
+  assert.equal(BLOOM_NEAR_MIN, 0);
 });
 
 test('화면 밖 감쇠: 원반이 크면 중심이 화면 밖이어도 가장자리가 안이면 1', () => {

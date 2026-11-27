@@ -12,6 +12,7 @@ import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples,
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
 import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { refDistance, lightScale } from './exposure.js';
+import { LIMB_GLSL } from './sun.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
 import { HAUMEA_POLE, HAUMEA_RING } from './dwarfs.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
@@ -113,6 +114,25 @@ function loadShape(b) {
     b.mesh.geometry = geo;
   }).catch(e => console.warn(`모양 모형을 못 불러옴: ${b.key} (${e}) — 구로 둔다`));
 }
+// 태양 가장자리 어두워짐(src/sun.js): 화면 공간 법선과 시선의 코사인으로 선형 색에 곱한다(sceneRT가 선형이라 빛 세기로 곱해진다)
+function limbDarken(mat) {
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vLdN;
+varying vec3 vLdP;`)
+      .replace('#include <project_vertex>', `#include <project_vertex>
+  vLdN = normalize(normalMatrix * normal);
+  vLdP = mvPosition.xyz;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vLdN;
+varying vec3 vLdP;
+${LIMB_GLSL}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+  diffuseColor.rgb *= limbDarkening(dot(normalize(vLdN), normalize(-vLdP)));`);
+  };
+}
 const ALL = [...BODIES, ...MOONS, ...SMALL_BODIES];
 const bodies = ALL.map(b => {
   const fine = TEXTURED.has(b.key) || b.key in SURFACE_UNDER;
@@ -123,6 +143,11 @@ const bodies = ALL.map(b => {
     ? new THREE.MeshBasicMaterial({ color: b.color })
     : new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0 });
   if (TEXTURED.has(b.key)) loadSurface(b.key, mat);
+  if (b.key === 'sun') {
+    limbDarken(mat);
+    // 흑점(고정 무늬): SDO/HMI 연속광 2024-04-27~05-23 한 자전 합성(tools/make_sunspots.py) — 선형 세기라 색(0xfff4e0)에 그대로 곱한다
+    loadTexture('textures/sun_spots_2k.jpg').then(tex => { mat.map = tex; mat.needsUpdate = true; }, () => console.warn('흑점 지도를 못 불러옴 — 무늬 없이 둔다'));
+  }
   const mesh = new THREE.Mesh(geo, mat);
   mesh.layers.enable(OCCLUDE);
   scene.add(mesh);

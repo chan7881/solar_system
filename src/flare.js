@@ -39,7 +39,7 @@ export function ghosts(p, c, H) {
 // ---------- 후광(블룸) ----------
 // 밝은 원반의 빛이 렌즈·센서에서 번진 것. 원반 가장자리 밖 거리 e(px)에 대해 세 겹의 지수 감쇠.
 // 폭은 원반 반지름 rs(px)에 비례하는 몫 + 화면 높이에 비례하는 몫 — 멀어 원반이 점이어도 번짐이 남고,
-// 다가가 원반이 커지면 후광도 같이 커진다. 바깥 두 겹(화면 높이 0.1·0.22)이 예전 광선 자리를 덮는다. 렌즈 효과(유령)와 달리 원반이 화면을 채워도 끄지 않는다.
+// 다가가 원반이 커지면 후광도 같이 커진다. 바깥 두 겹(화면 높이 0.1·0.22)이 예전 광선 자리를 덮는다. 원반이 화면을 크게 채우면 렌즈 효과처럼 사라진다(bloomNearDim).
 export const BLOOM = [
   { a: 0.04, b: 0.01, k: 0.7, color: [1.0, 0.97, 0.9] },
   { a: 0.15, b: 0.04, k: 0.4, color: [1.0, 0.9, 0.74] },
@@ -170,9 +170,9 @@ export function flareGain(p, W, H, dist, sunR, fovY, vis, rs = 0) {
   if (!p) return 0;
   return flareStrength(dist, sunR, fovY) * vis * offscreenFade(p, W, H, rs);
 }
-// 가까이서 원반이 크면 후광을 약하게(끄지는 않는다, 2026-11-22 사용자 결정):
-// 원반 반지름이 화면 반높이의 0.08 아래면 1, 0.4 넘으면 BLOOM_NEAR_MIN, 그 사이는 부드럽게.
-export const BLOOM_NEAR_MIN = 0.35;
+// 가까이서 원반이 크면 후광을 줄이다 없앤다(2026-11-27 사용자 결정 — 원반의 가장자리 어두워짐이 보이게. 레이어는 켜진 채):
+// 원반 반지름이 화면 반높이의 0.08 아래면 1, 0.4 넘으면 BLOOM_NEAR_MIN(0), 그 사이는 부드럽게.
+export const BLOOM_NEAR_MIN = 0;
 export function bloomNearDim(rs, H) {
   const t = Math.min(1, Math.max(0, (rs / (H / 2) - 0.08) / (0.4 - 0.08)));
   return 1 - (1 - BLOOM_NEAR_MIN) * t * t * (3 - 2 * t);
