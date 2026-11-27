@@ -1872,6 +1872,8 @@ function updateComets(jd) {
 
 // ---------- 한 장면 ----------
 // 햇빛 노출: 모든 몸체(태양 빼고)의 직접광에 몸체별 배율 uExpo를 곱한다 — 식은 exposure.js. 토성·지구는 앞서 단 패치 위에 겹친다.
+// 정반사는 끈다(램버트만): MeshStandardMaterial은 거칠기 1이어도 F0=0.04 정반사가 반사율과 상관없이 약 0.009를 더해,
+// 이아페투스 어두운 쪽(반사율 약 0.02)이 밝은 쪽의 1/10이 아니라 1/6으로 보였다(2026-11-27, 끄면 화면 0.117 · 지도 0.114).
 // 프로그램 캐시 열쇠는 onBeforeCompile 글자를 쓰므로 몸체마다 따로 준다(안 그러면 서로 다른 패치가 한 프로그램을 같이 쓴다).
 for (const b of bodies) {
   if (b.key === 'sun') continue;
@@ -1880,7 +1882,7 @@ for (const b of bodies) {
     if (prev) prev(sh, r);
     sh.uniforms.uExpo = b.expo; sh.uniforms.uFlat = flatU;
     sh.fragmentShader = 'uniform float uExpo; uniform float uFlat;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>',
-      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular *= uExpo;\n' +
+      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular = vec3(0.0);\n' +
       // 그림자 끔: 밤면(N·L이 작은 곳)을 N·L = 0.5 밝기까지 끌어올린다. 낮 쪽은 그대로, 경계는 이어진다(해 빛 세기 3은 PointLight와 같은 눈금)
       'if (uFlat > 0.5) reflectedLight.directDiffuse = max(reflectedLight.directDiffuse, diffuseColor.rgb * (1.5 / PI) * uExpo);');
   };

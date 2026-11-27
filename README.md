@@ -20,12 +20,14 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 
 - **태양 가장자리 어두워짐·흑점(2026-11-27):** 주연감광 `src/sun.js`(Allen 550nm 2차식, 화면에서 0.9R 0.652·0.98R 0.480 — 식 0.662·0.476). 렌즈 효과 후광은 원반이 커지면 0까지(`flare.js` `BLOOM_NEAR_MIN`=0, 레이어는 켠 채 — 사용자 결정) → 기본 태양 보기(4.3R)에서 후광 0. 흑점은 SDO/HMI HMIIF 2024-04-27~05-23 매일 1장 합성 고정 무늬(`tools/make_sunspots.py` → `textures/sun_spots_2k.jpg`, 원본 `원본/sun/` git 밖). 배치 확인 `tools/check_sunspots.py`: 정면 띠 상관 흑점 있는 날 0.90~0.98, 좌우 뒤집은 변이 0.02. 밝기는 JPEG 영점 I0=0.2로 선형 복원 — 흑점은 실제 비율대로 회색 그대로 두고, 흑점 켜고 끄기 스위치는 만들지 않음(사용자 결정)
 
+- **이아페투스 명암·정반사 끔(2026-11-27):** 지도를 명암이 남은 Cassini PIA18436 밝기로 바꿈(`tools/make_iapetus.py`) — 어두운 쪽 중심/밝은 쪽 반사율 비를 1차 출처 약 1/10에 맞춤(저장한 지도 0.101, 밝은 쪽 밝기는 예전 그대로). 모든 천체의 정반사(F0=0.04, 반사율과 상관없이 약 0.009를 더함)를 꺼 램버트만 남김(사용자 결정) — 화면 보름 위상 정중앙 비 0.117(지도 0.114), 켠 채로는 0.171. 밝은 천체는 약 6% 어두워짐
+
 ## 남은 일
 
 기능 항목은 시안·계획을 승인받은 뒤 진행한다.
 
 1. **목성형 행성 고리(추가):** 목성·천왕성·해왕성 고리. 하우메아처럼 τ·I/F를 1차 출처로 정하고 테스트로 되살린 뒤 화면 화소로 비침·밝기를 잰다. 너무 옅어 안 보이면 궤도 표시처럼 「고리 강조」 레이어 옵션 — 시안부터
-2. **세부 묘사(승인됨 2026-11-27):** 히페리온 지도 여부 · 이아페투스 명암 보정 · 천왕성 위성 북반구·트리톤 북쪽(자료 한계) · 세레스 색(자료 없음)
+2. **세부 묘사(승인됨 2026-11-27):** 히페리온 지도 여부 · 천왕성 위성 북반구·트리톤 북쪽(자료 한계) · 세레스 색(자료 없음)
 3. **하지 않기로 함(사용자 결정):** 천왕성 세부 묘사
 
 ## 얼개
@@ -50,7 +52,8 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `src/rings_glsl.js` | 고리 셰이더 식(GLSL 문자열) — `rings.js`와 같은 식. 스칼라 연산·vec 생성자·dot·length·.x/.y/.z만 써야 테스트가 JS로 옮겨 대조한다(벡터 사칙연산을 쓰면 테스트가 깨진다) |
 | `textures/` · `tools/make_textures.py` · `tools/make_saturn.py` · `tools/make_venus.py` · `tools/make_titan.py` | 표면 지도 2K JPG와 출처(`textures/출처.md`). 원본(수백 MB)은 git 밖 — 주소는 출처.md, 줄이기는 스크립트 |
 | `src/comets.js` · `tools/make_comets.py` | 혜성 활동량·이온 꼬리 방향·먼지 알갱이(케플러)·코마 크기 — 순수 함수(`tests/comets.test.mjs`), 화면은 `main.js` 「혜성 코마·꼬리」. 핵 모양 파일(원본 `원본/67p`·`원본/halley`, git 밖) |
-| `tools/make_saturnmoons.py` | 토성 위성 6개 지도(원본은 `원본/saturnmoons/`, git 밖 · `check` 인자로 분화구 겹친 확인 그림) |
+| `tools/make_saturnmoons.py` | 토성 위성 5개 지도 — 이아페투스는 아래 `make_iapetus.py`(원본은 `원본/saturnmoons/`, git 밖 · `check` 인자로 분화구 겹친 확인 그림) |
+| `tools/make_iapetus.py` | 이아페투스 지도 — PIA18436 밝기를 L = K·v^G로(어두운/밝은 비 0.10, 밝은 쪽은 예전 지도 값). 원본 `원본/saturnmoons/PIA18436.tif`(git 밖) · `check` 인자로 분화구 겹친 그림 |
 | `tools/make_galilean.py` | 갈릴레이 위성 지도(원본은 `원본/galilean/`, git 밖 · 주소는 `textures/출처.md` · 지도마다 왼쪽 끝 경도를 지형으로 확인한 값) |
 | `tools/make_smallworlds.py` · `tools/make_neptune.py` · `tools/fetch_rot_smallworlds.py` | 세레스·트리톤·천왕성 위성 5개 지도(원본 `원본/ceres`·`triton`·`uranusmoons`, git 밖 · 경도 배치 확인은 스크립트 머리) · 해왕성 위도 띠(`원본/neptune`) · 이들의 자세 검사 기준값을 Horizons에서 받기(`tests/smallworlds_rot.test.mjs`) |
 | `tools/make_pluto.py` | 명왕성·카론 지도(원본은 `원본/pluto/`, git 밖 · 주소는 `textures/출처.md`) |

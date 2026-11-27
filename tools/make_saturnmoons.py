@@ -1,4 +1,4 @@
-"""토성 위성 6개 지도 — USGS Cassini(·Voyager) 전구 모자이크를 2048×1024 JPG로(가운데 = 경도 0°, 동쪽이 오른쪽).
+"""토성 위성 5개 지도(이아페투스는 make_iapetus.py) — USGS Cassini(·Voyager) 전구 모자이크를 2048×1024 JPG로(가운데 = 경도 0°, 동쪽이 오른쪽).
 
 원본은 git에 넣지 않는다(수백 MB, 원본/saturnmoons/). 주소는 textures/출처.md. 줄이기·빈 곳 메우기는 make_galilean.py와 같다.
 쓰는 법: python tools/make_saturnmoons.py <원본 폴더> [check] [천체 ...]
@@ -11,7 +11,7 @@ USGS 지명 자료(분화구 중심·지름, 원본/saturnmoons/names/)를 겹�
   테티스      왼쪽 끝 동경 −180° — Odysseus 북위 32.8°·동경 231.1°, Telemus, 점수 최고 180°
   디온        왼쪽 끝 동경 −180° — Evander·Aeneas, 점수 최고 180°
   레아        왼쪽 끝 동경 −180° — 라벨(서경+·가운데 180°)대로 읽은 0°는 틀림. 점수 최고 180°(1.40배, 0°는 낮음)
-  이아페투스  왼쪽 끝 동경 −180° — Turgis·Engelier·Gerin 분지, 어두운 Cassini Regio가 동경 270° 둘레, 점수 최고 182°
+  (빠짐) 이아페투스 USGS판 왼쪽 끝 동경 −180° — Turgis·Engelier·Gerin 분지, 어두운 Cassini Regio가 동경 270° 둘레, 점수 최고 182°
 """
 import json
 import sys
@@ -28,7 +28,7 @@ SOURCES = {  # 천체: (파일, 원본 왼쪽 끝의 동경, 평균 반지름 km
     'tethys': ('Tethys_Cassini_mosaic_global_293m.tif', -180, 531.0),
     'dione': ('Dione_Cassini_Voyager_mosaic_global_154m.tif', -180, 561.4),
     'rhea': ('Rhea_Cassini_Voyager_mosaic_global_417m.tif', -180, 763.5),
-    'iapetus': ('Iapetus_Cassini_Voyager_mosaic_global_783m.tif', -180, 734.3),
+    # 이아페투스는 tools/make_iapetus.py(명암이 남은 PIA18436) — USGS 모자이크는 두 반구 명암이 83 대 110으로 눌려 있다
 }
 
 
