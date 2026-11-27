@@ -8,6 +8,8 @@
 
 구름 뽑기: 구름은 흰색(세 채널이 비슷하게 높음), 땅·바다는 어느 한 채널이 낮다 → 관측의 min(R,G,B) 가 구름 몫.
 맑은 날 지표(textures/earth_2k.jpg)의 min(R,G,B)를 바탕으로 빼서 구름 투명도를 낸다(눈·사막처럼 바탕이 밝은 곳은 자동으로 약해진다).
+빼기는 선형 빛 세기로 한다(관측 = a·흰 구름 + (1−a)·바탕) — 화면이 선형으로 섞으므로. 8비트에서 옅은 구름이 뭉개지지 않게
+a^(1/2.2)로 담고 셰이더가 2.2승으로 되돌린다(main.js 구름 껍질).
 색은 셰이더에서 입힌다(흰색 × 낮 밝기). 구름은 시간을 돌려도 고정(사용자 결정, 2026-11-22).
 쓰는 법: python tools/make_clouds.py [check]   — check는 구름을 지표 위에 얹은 확인 그림을 scratch에 낸다
 """
@@ -54,7 +56,12 @@ def merged(date: str):
     return rgb, vt | vq
 
 
+def lin(v):
+    return np.where(v <= 0.04045, v / 12.92, ((v + 0.055) / 1.055) ** 2.4)
+
+
 def cloud_alpha() -> np.ndarray:
+    """선형 구름 투명도(0~1)"""
     rgb, ok = merged(BASE)
     rgbN, okN = merged(NORTH)
     lat = 90 - (np.arange(H) + 0.5) / H * 180
@@ -66,7 +73,8 @@ def cloud_alpha() -> np.ndarray:
     m = rgb.min(axis=-1)
     surf = np.asarray(Image.open(SURF).convert('RGB').resize((W, H), Image.LANCZOS), dtype=np.float32) / 255
     mb = surf.min(axis=-1)
-    a = np.clip((m - mb * 0.9 - 0.08) / (1 - mb * 0.9 - 0.08), 0, 1)
+    th = lin(mb * 0.9 + 0.08)  # 바탕 문턱(sRGB 값으로 정한 것을 선형으로)
+    a = np.clip((lin(m) - th) / (1 - th), 0, 1)
     # 눈·얼음: 7-2-1 합성에서 하늘색(G − R 큼). 위도 45° 위·−55° 아래에서만 걸러 낸다(열대 얼음 구름은 남긴다)
     def cyan(date):
         b = np.asarray(Image.fromarray((fetch('NOAA20', date, 'BandsM11-I2-I1', 2048, 1024)[..., :3] * 255).astype(np.uint8))
@@ -82,10 +90,11 @@ def cloud_alpha() -> np.ndarray:
 
 if __name__ == '__main__':
     a = cloud_alpha()
-    im = Image.fromarray((a * 255).astype(np.uint8), 'L')
+    im = Image.fromarray((a ** (1 / 2.2) * 255 + 0.5).astype(np.uint8), 'L')
     im.save(OUT, quality=88, optimize=True)
     print(f'{OUT.name}: {OUT.stat().st_size // 1024}KB, 평균 {a.mean():.3f}, 0.5 넘는 칸 {np.mean(a > 0.5) * 100:.1f}%')
     if 'check' in sys.argv:
         surf = np.asarray(Image.open(SURF).convert('RGB').resize((W, H), Image.LANCZOS), dtype=np.float32) / 255
-        out = surf * (1 - a[..., None]) + a[..., None]
-        Image.fromarray((out * 255).astype(np.uint8)).resize((2048, 1024), Image.LANCZOS).save(ROOT / '원본' / 'clouds' / 'check.png')
+        out = lin(surf) * (1 - a[..., None]) + a[..., None]
+        enc = np.where(out <= 0.0031308, out * 12.92, 1.055 * out ** (1 / 2.4) - 0.055)
+        Image.fromarray((enc * 255 + 0.5).astype(np.uint8)).resize((2048, 1024), Image.LANCZOS).save(ROOT / '원본' / 'clouds' / 'check.png')

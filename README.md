@@ -5,7 +5,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 
 ## 지금 상태
 
-완료·화면 승인. 테스트 548개 통과(`npm test`). 수치 대조는 각 테스트와 `textures/출처.md`. 저장소 `chan7881/solar_system`(공개). 기능별 완료 기록과 잰 값은 `이력.md`.
+완료·화면 승인. 테스트 554개 통과(`npm test`). 수치 대조는 각 테스트와 `textures/출처.md`. 저장소 `chan7881/solar_system`(공개). 기능별 완료 기록과 잰 값은 `이력.md`.
 
 - **화면 틀:** 실제 비율 · 행성 8 · 시간 조작(1800~2050) · 이름표 · 날아가기 · 사이드바 · 레이어 창 · 별자리 · 「전체 보기」
 - **자세:** 전 천체 IAU 2015 + 계별 주기 항, Horizons 직하점 대조(히페리온만 보기용 회전)
@@ -13,14 +13,16 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 - **토성 고리 · 그림자:** Cassini 자료로 비침·그림자(`src/rings_glsl.js`). 레이어 「그림자」를 끄면 고리·토성 그림자가 없어지고 밤면이 밝아진다(지구 구름 그림자는 그대로 — 사용자 결정)
 - **위성 22개 · 소천체 · 혜성:** 달은 ELP, 나머지는 Horizons 맞춘 식. 혜성 꼬리·코마(`src/comets.js`) — 한계: 고리는 혜성 꼬리를 가리지 않는다
 - **도구:** 거리 재기 · 크기 비교 · 궤도 보기(공전 주기 포함) · 최소·최대 거리
+- **왜행성:** 세 왜행성 색을 관측값으로, 하우메아 자세·고리(`src/dwarfs.js`). 한계: 고리→몸체 그림자 없음, 몸체 색에 pV를 램버트 반사율로 넣어 원판 평균이 실제의 약 2/3
 - **지구 · 태양:** 밤 불빛 · 대기 빛 · 구름. 태양 렌즈 효과·1/r² 노출 — 행성 여러 개가 한 화면에 든 장면은 아직 안 봄
+- **선형 합성(2026-11-27):** 본 장면을 `sceneRT`에 선형으로 그려 반투명이 빛 세기로 섞인다(토성·하우메아 고리 `on = L + T·off` 오차 0.0009·0.0017, `tools/check_blend.js`). 표시용 선·점은 예전 밝기 유지(`uiAlpha`), 구름 지도는 선형 분리로 다시 뽑음
 
 ## 남은 일
 
 기능 항목은 시안·계획을 승인받은 뒤 진행한다.
 
-1. **왜행성 세부 묘사:** 하우메아·마케마케·에리스(단색). 관측 논문 확인 후 밝기·색으로 근사 — 시안부터
-2. **세부 묘사 후보:** 태양 가장자리 어두워짐(문헌 계수 또는 JSOC FITS) · 히페리온 지도 여부 · 이아페투스 명암 보정 · 천왕성 위성 북반구·트리톤 북쪽(자료 한계) · 세레스 색(자료 없음)
+1. **목성형 행성 고리(추가):** 목성·천왕성·해왕성 고리. 하우메아처럼 τ·I/F를 1차 출처로 정하고 테스트로 되살린 뒤 화면 화소로 비침·밝기를 잰다. 너무 옅어 안 보이면 궤도 표시처럼 「고리 강조」 레이어 옵션 — 시안부터
+2. **세부 묘사(승인됨 2026-11-27 — 태양 주연감광부터):** 태양 가장자리 어두워짐(문헌 계수 또는 JSOC FITS) · 히페리온 지도 여부 · 이아페투스 명암 보정 · 천왕성 위성 북반구·트리톤 북쪽(자료 한계) · 세레스 색(자료 없음)
 3. **하지 않기로 함(사용자 결정):** 천왕성 세부 묘사
 
 ## 얼개
@@ -34,6 +36,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `src/extremes.js` · `src/extremes_worker.js` | 두 천체 최소·최대 거리와 그때 위치(1800~2050). `absPos`는 `main.js updatePositions`와 같은 식이라 한쪽을 고치면 둘 다 |
 | `src/orbit.js` · `tools/fetch_orbit_check.py` | 궤도 보기 — 그 시각 궤도·장반경·단반경·근점·원점·카메라 방향·화면 맞추기(순수 함수). 대조 자료 `tests/horizons_orbit.json`은 스크립트가 받는다(원본 `원본/orbit/`, git 밖). 화면은 `main.js` 「궤도 보기」 |
 | `src/atmosphere.js` · `tools/make_nightlights.py` | 지구 밤 불빛 세기(`nightWeight`)·대기 가장자리 빛(`rimGlow`)과 같은 식의 GLSL, 시험용 `sunMu`. 질감 `textures/earth_night_2k.jpg`(원본 `원본/nightlights/`, git 밖). 화면은 `main.js` 「지구 밤 불빛·대기」 |
+| `src/dwarfs.js` | 왜행성 색·하우메아 고리 값(순수 함수). 화면은 `main.js` 「하우메아 자세·고리」 |
 | `src/nav.js` | 사이드바 분류(태양·행성+위성·기타)·시간 빠르기 칸·문구·레이어 목록과 천체 표시 판정 — 순수 함수(`tests/nav.test.mjs`) |
 | `tools/make_constellations.py` | 별자리 선·이름(d3-celestial, BSD-3) → `textures/constellations.json`. 원본은 `원본/const/`(git 밖, 주소는 스크립트 머리) |
 | `src/moons.js` · `src/moon_fits.js` | 위성 목록·위치(달은 ELP 주요 항, 나머지는 맞춘 식)·질량중심 보정. `moon_fits.js`는 `tools/fit_moons.py`가 만든다(손으로 고치지 않음) |
@@ -48,7 +51,7 @@ COSMIC TRAIL(다른 선생님 작품)의 **태양계 부분만** 떼어 새로 �
 | `tools/make_galilean.py` | 갈릴레이 위성 지도(원본은 `원본/galilean/`, git 밖 · 주소는 `textures/출처.md` · 지도마다 왼쪽 끝 경도를 지형으로 확인한 값) |
 | `tools/make_smallworlds.py` · `tools/make_neptune.py` · `tools/fetch_rot_smallworlds.py` | 세레스·트리톤·천왕성 위성 5개 지도(원본 `원본/ceres`·`triton`·`uranusmoons`, git 밖 · 경도 배치 확인은 스크립트 머리) · 해왕성 위도 띠(`원본/neptune`) · 이들의 자세 검사 기준값을 Horizons에서 받기(`tests/smallworlds_rot.test.mjs`) |
 | `tools/make_pluto.py` | 명왕성·카론 지도(원본은 `원본/pluto/`, git 밖 · 주소는 `textures/출처.md`) |
-| `tests/` | `npm test` — 토성 위성 자세(`horizons_saturnmoons_rot.txt`·`_vec.txt`, 태양·토성 중심) · 갈릴레이 위성 자세(`horizons_galilean_rot.txt`·`_vec.txt`, 태양·목성 중심) · 명왕성·카론 자세·마주 보는 점(`horizons_pluto_rot.txt`·`_vec.txt`) · — 포보스·데이모스 자세는 Horizons 직하점(`horizons_marsmoons_rot.txt`·`_vec.txt`), 모양은 부피·축·스티크니 자리(`shapes.test.mjs`) · 달 자세는 Horizons 원판 가운데·태양 직하점(`horizons_moon_rot.txt`) · JPL Horizons 값(`horizons_raw.txt`, 8행성×4날짜)과 방향·거리·z 부호, 공전 방향, 좌표 변환 · 위성은 Horizons(`horizons_moons.txt`, 20개×4날짜)·지구-질량중심 거리·공전 방향(트리톤만 역행) · 타이탄 자세는 Horizons 원판 가운데·태양 직하점(`horizons_titan_rot.txt`)과 Horizons 위치(`horizons_titan_vec.txt`) · 자세는 Horizons 태양 직하점(`horizons_subsolar.txt`), 자전 방향, 자전축 기울기, 토성 고리면 통과 |
+| `tests/` | `npm test` — Horizons·관측값 대조와 방향·부호. 대조 자료(`horizons_*.txt`·`.json`)와 기준은 각 테스트 파일 머리 |
 
 - **카메라가 늘 원점을 보는 것은 아니다** — 궤도 보기가 `controls.target`(바라보는 점)과 `camera.up`을 옮긴다. 거리는 `camera.position.distanceTo(controls.target)`으로 잰다. `camera.up`을 바꾸면 OrbitControls의 `_quat`도 함께 고친다(`setUp`).
 - 실행: 폴더에서 `python serve.py`(캐시를 꺼서 브라우저가 옛 모듈을 붙잡지 않는다) → `http://127.0.0.1:8731/` (파일을 직접 열면 모듈이 안 뜬다)

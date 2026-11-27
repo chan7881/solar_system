@@ -24,6 +24,17 @@ const FOV = 45;
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// 본 장면은 반정밀 부동소수 화면(sceneRT)에 선형으로 그린 뒤 화면용(sRGB)으로 바꾼다 — 반투명(고리·구름)이 빛의 세기로 섞이게.
+// 그 화면을 못 만드는 GPU는 예전처럼 캔버스에 바로 그린다(반투명이 sRGB 값으로 섞임)
+const LINEAR = renderer.extensions.has('EXT_color_buffer_half_float') || renderer.extensions.has('EXT_color_buffer_float');
+// 화면 표시용(궤도선·궤적·점 무리·재기 선)은 빛이 아니라 표시라 예전 모습을 지킨다 — 검은 하늘 위에서 a·c(sRGB) ≈ a^2.2·c(선형)
+const uiAlpha = mat => {
+  if (LINEAR) mat.onBeforeCompile = sh => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
+  gl_FragColor.a = pow(gl_FragColor.a, 2.2);`);
+  };
+  return mat;
+};
 const scene = new THREE.Scene();
 const OCCLUDE = 1; // 혜성 코마·꼬리를 가리는 몸체의 층(drawGlow가 이 층만 깊이로 먼저 그린다)
 scene.background = new THREE.Color(0x000000);
@@ -125,12 +136,12 @@ const bodies = ALL.map(b => {
       col.set([c.r, c.g, c.b, Math.pow(1 - k / TRAIL_N, 1.5) * 0.9], k * 4);
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 4));
-    trail = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }));
+    trail = new THREE.Line(g, uiAlpha(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false })));
     trail.frustumCulled = false;
     trail.renderOrder = 2; // 점 무리(0)보다 나중에 그려 궤도선이 점에 묻히지 않게
     scene.add(trail);
     // 궤도: 같은 점을 한 바퀴 고른 밝기로(궤적은 천체 뒤로 흐려지는 꼬리)
-    orbitLine = new THREE.Line(g, new THREE.LineBasicMaterial({ color: c, transparent: true, depthWrite: false }));
+    orbitLine = new THREE.Line(g, uiAlpha(new THREE.LineBasicMaterial({ color: c, transparent: true, depthWrite: false })));
     orbitLine.frustumCulled = false;
     orbitLine.renderOrder = 2;
     scene.add(orbitLine);
@@ -273,7 +284,8 @@ byKey.earth.mesh.material.onBeforeCompile = sh => {
     #include <map_fragment>
     // 구름 그림자: 같은 구름 지도를 지표 바로 아래(어긋남 0)에 흐리게(mip 편향) 겹쳐 어둡게 한다. 구름 높이 10km의 그림자는 낮은 태양에서도
     // 4K 지도(한 칸 약 10km) 한두 칸만 밀려서, 따로 구운 그림자 질감이나 광선 계산 없이 이 질감 읽기 한 번으로 충분하다.
-    if (uCloudOn > 0.5) diffuseColor.rgb *= 1.0 - uShadow * texture2D(uCloud, vUvN, 1.5).r;
+    // 지도 값은 a^(1/2.2)로 담겨 있다(make_clouds.py) — 가리는 몫은 선형 a
+    if (uCloudOn > 0.5) diffuseColor.rgb *= 1.0 - uShadow * pow(texture2D(uCloud, vUvN, 1.5).r, 2.2);
     `).replace('#include <emissivemap_fragment>', `
     #include <emissivemap_fragment>
     if (uNightOn > 0.5) {
@@ -328,7 +340,8 @@ const cloudMesh = new THREE.Mesh(ellipsoidGeometry(byKey.earth.re * CLOUD_K, byK
     varying vec3 vN; varying vec2 vUvC;
     void main() {
       #include <logdepthbuf_fragment>
-      float a = texture2D(uCloud, vUvC).r * uCloudOpacity;
+      // 구름 투명도 지도는 sRGB 합성에 맞춰 뽑았다 — 선형 합성에서는 검은 바다 위 밝기가 같도록 2.2승(구름 그림자는 그대로)
+      float a = ${LINEAR ? 'pow(texture2D(uCloud, vUvC).r, 2.2)' : 'texture2D(uCloud, vUvC).r'} * uCloudOpacity;
       float mu = dot(normalize(vN), uSunL);
       float day = smoothstep(-0.1, 0.35, mu);
       if (uFlat > 0.5) { day = max(day, 0.5); mu = max(mu, 0.5); }
@@ -732,7 +745,7 @@ const GROUP_NAMES = ['소행성대', '힐다', '트로이군', '카이퍼대'];
 const OORT_COLOR = 0x7d8fb0;
 const PLAIN = 0xffffff;
 const CLOUD_ALPHA = 0.32, OORT_ALPHA = 0.5;
-const cloudMat = new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false });
+const cloudMat = uiAlpha(new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
 const cloud = new THREE.Points(new THREE.BufferGeometry(), cloudMat);
 cloud.frustumCulled = false;
 cloud.visible = false;
@@ -760,7 +773,7 @@ fetch('textures/small_bodies.bin').then(r => { if (!r.ok) throw new Error(r.stat
 }).catch(e => console.warn('소천체 무리를 못 불러옴 — 점 없이 둔다', e));
 const OORT_N = 30000;
 const oort = new THREE.Points(new THREE.BufferGeometry(),
-  new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, color: PLAIN, transparent: true, depthWrite: false }));
+  uiAlpha(new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, color: PLAIN, transparent: true, depthWrite: false })));
 {
   const p = oortCloud(OORT_N); // AU, 장면 좌표
   for (let i = 0; i < p.length; i++) p[i] *= AU_KM;
@@ -1212,7 +1225,7 @@ const toolShows = key => (distOn() && state.pair.dist.includes(key)) || (orbitOn
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const MEASURE = cssVar('--measure') || '#ffd166';
 const distLine = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
-  new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.9, depthWrite: false }));
+  uiAlpha(new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.9, depthWrite: false })));
 distLine.frustumCulled = false;
 distLine.renderOrder = 3;
 distLine.visible = false;
@@ -1264,8 +1277,8 @@ const orbGroup = new THREE.Group();
 orbGroup.visible = false;
 scene.add(orbGroup);
 function orbLine(n, color, opacity, dashed = false) {
-  const mat = dashed ? new THREE.LineDashedMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false, dashSize: 1, gapSize: 1 })
-    : new THREE.LineBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false });
+  const mat = uiAlpha(dashed ? new THREE.LineDashedMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false, dashSize: 1, gapSize: 1 })
+    : new THREE.LineBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false }));
   const line = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3)), mat);
   line.frustumCulled = false;
   line.renderOrder = 3;
@@ -1409,7 +1422,7 @@ function requestExt(a, b) {
 const extLines = {}, extDots = {}, extTags = {};
 for (const k of ['min', 'max']) {
   const line = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
-    new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.45, depthWrite: false }));
+    uiAlpha(new THREE.LineBasicMaterial({ color: new THREE.Color(MEASURE), transparent: true, opacity: 0.45, depthWrite: false })));
   line.frustumCulled = false;
   line.renderOrder = 3;
   line.visible = false;
@@ -1619,7 +1632,7 @@ const comaMat = () => new THREE.ShaderMaterial({
 // 깊이로만 먼저 그리고 꼬리를 깊이 판정한다 — 행성·위성 뒤의 꼬리가 가려진다. 고리는 반투명이라 넣지 않았다(고리 뒤 꼬리는 그대로 비친다)
 const glowScene = new THREE.Scene();
 // 반정밀 부동소수 화면에 그릴 수 없는 GPU(일부 옛 모바일)는 8비트로 — 밝은 곳이 1에서 잘리지만 꼬리는 보인다
-const GLOW_TYPE = renderer.extensions.has('EXT_color_buffer_half_float') || renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType;
+const GLOW_TYPE = LINEAR ? THREE.HalfFloatType : THREE.UnsignedByteType;
 const glowRT = new THREE.WebGLRenderTarget(1, 1, { type: GLOW_TYPE, depthBuffer: true, samples: 4 }); // 다중 표본 — 행성 가장자리에서 꼬리가 계단지지 않게
 const occludeMat = new THREE.MeshBasicMaterial({ colorWrite: false });
 const glowQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
@@ -1913,9 +1926,26 @@ function step(now = performance.now()) {
   updateOrbit(jd);
 }
 
+// 본 장면(또는 크기 비교) → sceneRT(선형) → 화면용으로 바꿔 캔버스에. 혜성 코마·꼬리와 렌즈 효과는 그 위에 예전처럼 더한다
+const sceneRT = LINEAR ? new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: true, samples: 4 }) : null;
+const blitScene = new THREE.Scene().add(Object.assign(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: { tScene: { value: sceneRT?.texture ?? null } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: /* glsl */`
+    #include <common>
+    uniform sampler2D tScene; varying vec2 vUv;
+    void main() {
+      gl_FragColor = vec4(clamp(texture2D(tScene, vUv).rgb, 0.0, 1.0), 1.0);
+      #include <colorspace_fragment>
+    }`,
+  depthTest: false, depthWrite: false, blending: THREE.NoBlending,
+})), { frustumCulled: false }));
 function draw() {
-  if (state.tool === 'size') drawCompare();
-  else { renderer.render(scene, camera); drawGlow(); drawFlare(); }
+  const size = state.tool === 'size';
+  if (sceneRT) renderer.setRenderTarget(sceneRT);
+  if (size) drawCompare(); else renderer.render(scene, camera);
+  if (sceneRT) { renderer.setRenderTarget(null); renderer.render(blitScene, glowCam); }
+  if (!size) { drawGlow(); drawFlare(); }
 }
 
 // 무대 크기에 맞추고, 화면 중심을 조작부 위 보이는 영역의 가운데로 옮긴다(세로 화각 45°도 그 영역 기준)
@@ -1925,7 +1955,7 @@ function resize() {
   viewH = Math.max(100, stageH - panelEl.offsetHeight);
   stageEl.style.setProperty('--panel-h', panelEl.offsetHeight + 'px');
   renderer.setSize(stageW, stageH, false);
-  { const v = renderer.getDrawingBufferSize(new THREE.Vector2()); glowRT.setSize(v.x, v.y); }
+  { const v = renderer.getDrawingBufferSize(new THREE.Vector2()); glowRT.setSize(v.x, v.y); sceneRT?.setSize(v.x, v.y); }
   camera.aspect = stageW / viewH;
   camera.setViewOffset(stageW, viewH, 0, 0, stageW, stageH);
   camera.updateProjectionMatrix();
