@@ -12,6 +12,8 @@ import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples,
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
 import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { refDistance, lightScale } from './exposure.js';
+import { PV, surfaceGain, colorStats, albedoRef, albedoRatio } from './albedo.js';
+import { MAP_STATS } from './map_stats.js';
 import { LIMB_GLSL } from './sun.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
 import { HAUMEA_POLE, HAUMEA_RING } from './dwarfs.js';
@@ -173,7 +175,10 @@ const bodies = ALL.map(b => {
   }
   // 위치·궤도선 함수 — 행성(Standish)과 소천체(Horizons 요소)를 여기서 한 번 고른다(위성은 moons.js)
   const small = isSmallBody(b.key);
-  return { ...b, reach: SHAPE_REACH[b.key] ?? b.reach ?? b.radius, mesh, trail, orbitLine, expo: { value: 1 }, // expo: 햇빛 노출 배율(exposure.js) — 재질·고리·구름·가장자리 빛이 같이 쓴다
+  // 밝기 배율(albedo.js): 지도·단색의 밝기 기준을 실제 반사율 비로 맞춘다 — gain은 혼자 볼 때 화면 평균을 DISPLAY_MEAN으로, ref는 초점 대비 비
+  const sg = b.key === 'sun' ? { gain: 1, display: 1 } : surfaceGain(b.key, MAP_STATS[b.key] ?? colorStats(b.color));
+  const albedo = { gain: sg.gain, ref: b.key === 'sun' ? NaN : albedoRef(PV[b.key], sg.display) };
+  return { ...b, reach: SHAPE_REACH[b.key] ?? b.reach ?? b.radius, mesh, trail, orbitLine, albedo, expo: { value: 1 }, // expo: 햇빛 노출 배율(exposure.js) — 재질·고리·구름·가장자리 빛이 같이 쓴다
     helio: small ? smallBodyHelio : heliocentric, orbit: small ? smallBodyTrail : orbitTrail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
 });
 const byKey = Object.fromEntries(bodies.map(b => [b.key, b]));
@@ -594,8 +599,11 @@ function flyTo(key, opts = {}) {
   if (!state.atmosphere) applyAtmosphere(); // 대기를 끈 채로 왔으면 새 초점의 지도를 받기 시작
 }
 
+// 노출의 반사율 기준이 될 초점(날아가는 중이면 출발·도착 사이를 옮겨 간 정도 m으로 섞는다) — updateExposure가 읽는다
+let expoMix = null;
 function focusPosition(now) {
   const f = state.fly;
+  expoMix = null;
   if (!f) return byKey[state.focus].pos;
   // 그림 틀 시각이 누른 시각보다 앞설 수 있다 — 0 아래로 내려가면 거리가 NaN이 된다
   const s = THREE.MathUtils.clamp((now - f.t0) / f.dur, 0, 1);
@@ -605,6 +613,7 @@ function focusPosition(now) {
   if (s < c1) { d = lerpLog(f.d0, f.D, ease(s / c1)); m = 0; }
   else if (s < c2) { d = f.D; m = ease((s - c1) / (c2 - c1)); }
   else { d = c2 < 1 ? lerpLog(f.D, f.d1, ease((s - c2) / (1 - c2))) : f.d1; m = 1; }
+  expoMix = { from: f.from, to: f.to, m };
   const a = byKey[f.from].pos, b = byKey[f.to].pos;
   const dir = f.dir0.clone().lerp(f.dir1, ease(s));
   if (dir.lengthSq() < 1e-6) dir.copy(f.dir1); // 정반대 방향일 때 0 벡터 방지
@@ -1880,9 +1889,11 @@ for (const b of bodies) {
   const mat = b.mesh.material, prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (sh, r) => {
     if (prev) prev(sh, r);
-    sh.uniforms.uExpo = b.expo; sh.uniforms.uFlat = flatU;
-    sh.fragmentShader = 'uniform float uExpo; uniform float uFlat;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>',
-      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular = vec3(0.0);\n' +
+    sh.uniforms.uExpo = b.expo; sh.uniforms.uFlat = flatU; sh.uniforms.uGain = { value: b.albedo.gain };
+    // 주변광(밤면이 아주 조금 보이게 하는 0.04)에도 밝기 배율(albedo.js gain)만 곱한다 — 안 곱하면 배율이 작은 천체(금성)일수록
+    // 주변광 몫이 커져 혼자 볼 때 밝기가 고르지 않다(2026-11-27 화면: 금성 +14%)
+    sh.fragmentShader = 'uniform float uExpo; uniform float uFlat; uniform float uGain;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>',
+      '#include <lights_fragment_end>\nreflectedLight.directDiffuse *= uExpo; reflectedLight.directSpecular = vec3(0.0); reflectedLight.indirectDiffuse *= uGain;\n' +
       // 그림자 끔: 밤면(N·L이 작은 곳)을 N·L = 0.5 밝기까지 끌어올린다. 낮 쪽은 그대로, 경계는 이어진다(해 빛 세기 3은 PointLight와 같은 눈금)
       'if (uFlat > 0.5) reflectedLight.directDiffuse = max(reflectedLight.directDiffuse, diffuseColor.rgb * (1.5 / PI) * uExpo);');
   };
@@ -1891,9 +1902,13 @@ for (const b of bodies) {
 function updateExposure(fp) {
   const sp = byKey.sun.pos;
   const dRef = refDistance(Math.hypot(fp[0] - sp[0], fp[1] - sp[1], fp[2] - sp[2]));
+  // 초점의 반사율 기준(태양을 볼 때는 지구 기준 — 1AU에서 지구가 혼자 볼 때 밝기로)
+  const refOf = k => (k === 'sun' ? byKey.earth : byKey[k]).albedo.ref;
+  const refF = expoMix ? Math.exp(Math.log(refOf(expoMix.from)) * (1 - expoMix.m) + Math.log(refOf(expoMix.to)) * expoMix.m) : refOf(state.focus);
   for (const b of bodies) {
     if (b.key === 'sun') continue;
-    b.expo.value = state.tool === 'size' ? 1 : lightScale(dRef, Math.hypot(b.pos[0] - sp[0], b.pos[1] - sp[1], b.pos[2] - sp[2]));
+    b.expo.value = b.albedo.gain * (state.tool === 'size' ? 1
+      : lightScale(dRef, Math.hypot(b.pos[0] - sp[0], b.pos[1] - sp[1], b.pos[2] - sp[2]), albedoRatio(b.albedo.ref, refF)));
   }
 }
 let lastT = performance.now();

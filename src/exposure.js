@@ -15,8 +15,9 @@ export function refDistance(d) {
   const t = smooth(0.02 * AU_KM, 0.15 * AU_KM, d);
   return Math.exp(Math.log(AU_KM) + (Math.log(Math.max(d, 1)) - Math.log(AU_KM)) * t);
 }
-// 태양에서 d(km) 떨어진 천체에 곱하는 밝기: 초점(기준 거리 dRef) 대비 (dRef/d)²을 LIGHT_MIN~LIGHT_MAX로 자른 값
-export function lightScale(dRef, d) {
+// 태양에서 d(km) 떨어진 천체에 곱하는 밝기: 초점(기준 거리 dRef) 대비 k·(dRef/d)²을 LIGHT_MIN~LIGHT_MAX로 자른 값
+//   k는 초점 대비 반사율 비(albedo.js albedoRatio) — 없으면 1(거리 효과만)
+export function lightScale(dRef, d, k = 1) {
   if (!(d > 0) || !(dRef > 0)) return 1;
-  return Math.min(LIGHT_MAX, Math.max(LIGHT_MIN, (dRef / d) ** 2));
+  return Math.min(LIGHT_MAX, Math.max(LIGHT_MIN, k * (dRef / d) ** 2));
 }
