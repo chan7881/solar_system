@@ -13,6 +13,7 @@ import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPa
 import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { refDistance, lightScale } from './exposure.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
+import { HAUMEA_POLE, HAUMEA_RING } from './dwarfs.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
 const TRAIL_N = 360;
@@ -104,7 +105,7 @@ function loadShape(b) {
 const ALL = [...BODIES, ...MOONS, ...SMALL_BODIES];
 const bodies = ALL.map(b => {
   const fine = TEXTURED.has(b.key) || b.key in SURFACE_UNDER;
-  // 하우메아는 3축 타원체(자세 모형이 없어 긴 축을 황도면에 눕혀 둔다 — 돌리지 않는다)
+  // 하우메아는 3축 타원체(자세는 아래 「하우메아 자세·고리」 — 짧은 축을 고리 극에, 자전은 돌리지 않는다)
   const geo = b.abc ? new THREE.SphereGeometry(1, 48, 24).scale(b.abc[0], b.abc[2], b.abc[1])
     : b.parent ? new THREE.SphereGeometry(b.radius, ...(fine ? [96, 48] : [48, 24])) : ellipsoidGeometry(b.re, b.rp);
   const mat = b.key === 'sun'
@@ -377,6 +378,60 @@ function updateRings() {
   qInv.copy(m.quaternion).invert();
   ringU.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
   ringU.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
+}
+
+// ---------- 하우메아 자세·고리 ----------
+// 고리·히이아카 궤도가 적도면에 있다(Ortiz et al. 2017) → 짧은 축(로컬 +Y)을 고리 극에 맞춘다.
+// 자전 위상은 모른다(자세 모형 없음) — 긴 축(로컬 +X)은 적도면 위 아무 방향에 고정해 두고 돌리지 않는다.
+{
+  const yAx = new THREE.Vector3(...raDecToScene(HAUMEA_POLE.ra, HAUMEA_POLE.dec));
+  const xAx = new THREE.Vector3(0, 1, 0).cross(yAx).normalize(), zAx = new THREE.Vector3().crossVectors(xAx, yAx);
+  byKey.haumea.mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAx, yAx, zAx));
+}
+// 고리: 하우메아 몸체의 자식으로 적도면(로컬 XZ)에. 빛 식은 토성 고리와 같다(rings_glsl.js ringView) — τ·알갱이 반사율은 dwarfs.js.
+// 그림자는 몸체(3축 타원체)가 고리에 드리우는 것만 — 고리가 몸체에 드리우는 그림자는 얇아서(τ 0.08) 넣지 않았다.
+const hRingU = {
+  uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
+  uAbc: { value: new THREE.Vector3(byKey.haumea.abc[0], byKey.haumea.abc[2], byKey.haumea.abc[1]) }, // 로컬 x·y·z 반지름
+  uLight: ringU.uLight, uExpo: byKey.haumea.expo, uShadowOn: ringU.uShadowOn,
+};
+const hRingMat = new THREE.ShaderMaterial({
+  uniforms: hRingU,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+  vertexShader: ringMat.vertexShader,
+  fragmentShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    ${RING_LIGHT_GLSL}
+    uniform vec3 uSunL, uCamL, uAbc; uniform float uLight, uExpo, uShadowOn;
+    varying vec3 vP;
+    // 점 p에서 해 쪽(s)으로 간 빛줄기가 원점 중심 3축 타원체에 막히는가 — 축마다 나눠 단위 구 문제로
+    bool inBodyShadow(vec3 p, vec3 s) {
+      vec3 P = vec3(p.x / uAbc.x, p.y / uAbc.y, p.z / uAbc.z), S = vec3(s.x / uAbc.x, s.y / uAbc.y, s.z / uAbc.z);
+      float b = dot(P, S);
+      if (b > 0.0) return false;
+      return b * b - dot(S, S) * (dot(P, P) - 1.0) > 0.0;
+    }
+    void main() {
+      #include <logdepthbuf_fragment>
+      vec3 v = normalize(uCamL - vP);
+      vec2 tf = ringView(${HAUMEA_RING.tau.toFixed(5)}, v, uSunL);
+      float F = tf.y;
+      if (uShadowOn > 0.5 && inBodyShadow(vP, uSunL)) F = 0.0;
+      float w = ${HAUMEA_RING.albedo.toFixed(4)}; // 고리 색 자료가 없어 회색
+      gl_FragColor = vec4(vec3(w * F * uLight * uExpo), 1.0 - tf.x);
+      #include <colorspace_fragment>
+    }`,
+});
+const hRingMesh = new THREE.Mesh(new THREE.RingGeometry(HAUMEA_RING.rIn, HAUMEA_RING.rOut, 720, 1).rotateX(-Math.PI / 2), hRingMat);
+hRingMesh.renderOrder = 2.5;
+byKey.haumea.mesh.add(hRingMesh);
+function updateHaumeaRing() {
+  const m = byKey.haumea.mesh;
+  qInv.copy(m.quaternion).invert();
+  hRingU.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
+  hRingU.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
 }
 
 // ---------- 상태 ----------
@@ -1851,7 +1906,7 @@ function step(now = performance.now()) {
   updateClouds(jd);
   updateComets(jd);
   updateEarthAtmo();
-  updateRings(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
+  updateRings(); updateHaumeaRing(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateSky(updateGroupLabels(updateLabels()));
   updateDist();
   updateExt(fp);

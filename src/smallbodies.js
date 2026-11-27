@@ -10,6 +10,7 @@
 //   AJ 94, 1330), 바깥 경계 100,000AU(NASA Science 「Oort Cloud」), 방향은 고르게(공 껍질).
 
 import SB from './sb_elements.js';
+import { dwarfColor } from './dwarfs.js';
 
 const DEG = Math.PI / 180;
 const J2000 = 2451545.0;
@@ -20,12 +21,13 @@ const N_JUPITER = 3034.74612775 / 36525 * DEG; // Standish 목성 평균 경도 
 // 반지름 출처: 세레스·명왕성 IAU 2015(pck00011), 에리스 Sicardy et al. 2011, 하우메아 Ortiz et al. 2017,
 //   마케마케 Brown 2013, 혜성 핵은 모양 모형의 부피 같은 구 반지름(핼리 Stooke · 67P DLR SHAP4S, tools/make_comets.py)과
 //   추정치(엔케 Fernández et al. 2000 · 스위프트-터틀 · 헤일-밥 — 이 셋은 근사 모양)
+// 하우메아·마케마케·에리스 색은 관측 반사율·색지수로 계산한다(src/dwarfs.js)
 export const DWARFS = [
   { key: 'ceres',    name: '세레스',   radius: 469.7,  re: 487.3, rp: 446.0, color: 0x8a8580 },
   { key: 'pluto',    name: '명왕성',   radius: 1188.3, re: 1188.3, rp: 1188.3, color: 0xcaa98a },
-  { key: 'haumea',   name: '하우메아', radius: 797,    abc: [1161, 852, 513], reach: 1161, color: 0xe6e4e0 }, // reach: 가장 먼 점(카메라 근접 한계·이름표 가림)
-  { key: 'makemake', name: '마케마케', radius: 715,    re: 715, rp: 715, color: 0xc89c7c },
-  { key: 'eris',     name: '에리스',   radius: 1163,   re: 1163, rp: 1163, color: 0xe9e6e2 },
+  { key: 'haumea',   name: '하우메아', radius: 797,    abc: [1161, 852, 513], reach: 1161, color: dwarfColor('haumea') }, // reach: 가장 먼 점(카메라 근접 한계·이름표 가림)
+  { key: 'makemake', name: '마케마케', radius: 715,    re: 715, rp: 715, color: dwarfColor('makemake') },
+  { key: 'eris',     name: '에리스',   radius: 1163,   re: 1163, rp: 1163, color: dwarfColor('eris') },
 ].map(b => ({ ...b, kind: 'dwarf' }));
 export const COMETS = [
   { key: 'halley',      name: '핼리 혜성',          radius: 4.59 },
