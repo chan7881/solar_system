@@ -51,3 +51,8 @@ export const albedoRef = (pv, display) => pv / display;
 export function albedoRatio(refI, refF) {
   return refI / refF;
 }
+
+// 실제 I/F로 정한 빛(고리)을 그 천체 몸체와 같은 눈금으로 — 몸체는 지도 값을 램버트 반사율로 그려 보름 원반 평균이 (2/3)·지도 평균인데
+//   실제 원반 평균은 pV다. 고리 빛에 이 배수를 곱해야 몸체와 고리가 실제 밝기 비로 보인다(토성 0.405: 지도가 실제보다 어둡게 그려져서).
+//   몸체 배율(gain)·노출(expo)은 이 위에 몸체와 같이 곱해진다.
+export const realToMap = (pv, stats) => (2 / 3) * stats.mean / pv;

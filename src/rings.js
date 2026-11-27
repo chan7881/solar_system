@@ -5,13 +5,15 @@
 // C·B 경계(단면에서는 τ가 92,004km에서 뛴다)·B 바깥·A 안쪽은 경계 근처 작은 고리띠 때문에 단면으로 한 값을 고르기 어려워 널리 쓰는 값을 쓴다.
 export const RING_EDGES = { cIn: 74490, cb: 91983, bOut: 117516, aIn: 122053, aOut: 136774 };
 
-// 고리 알갱이 반사율(두꺼운 고리를 정면에서 볼 때의 I/F에 해당) — C고리·카시니 간극은 어둡고 붉은 기가 덜하다.
-// Cassini ISS 자연색 사진을 보고 맞춘 근사값이다(1차 출처의 측정값이 아니다 — textures/출처.md). tint는 화면 색(sRGB).
+// 고리 알갱이 반사율(두꺼운 고리를 정면에서 볼 때의 I/F에 해당 — 화면 밝기는 w × tint의 선형 밝기) — C고리·카시니 간극은 어둡고 붉은 기가 덜하다.
+// w는 HST F555W 광도(Salo & French 2010 Icarus 209, 표 1~3: C 78~83천·B 100~107천·A 127~129천km, 고리 기울기 4.5~23.6° · 위상각 약 6°)를
+//   이 앱의 빛 식(ringLight × 위상 함수)으로 되살리게 맞춘 값(기울기 다섯 개의 로그 평균, tests/rings_hst.test.mjs). 카시니 간극은 관측 표가 없어
+//   예전 값에 C고리와 같은 배수(0.43)를 곱했다(C고리와 닮은 어두운 알갱이). tint는 화면 색(sRGB) — Cassini 자연색 사진을 보고 맞춘 근사.
 export const RING_ALBEDO = [
-  { to: RING_EDGES.cb,   w: 0.25, tint: [1.0, 0.95, 0.88] }, // C고리
-  { to: RING_EDGES.bOut, w: 0.55, tint: [1.0, 0.90, 0.75] }, // B고리
-  { to: RING_EDGES.aIn,  w: 0.30, tint: [1.0, 0.94, 0.86] }, // 카시니 간극
-  { to: Infinity,        w: 0.45, tint: [1.0, 0.90, 0.76] }, // A고리
+  { to: RING_EDGES.cb,   w: 0.108, tint: [1.0, 0.95, 0.88] }, // C고리
+  { to: RING_EDGES.bOut, w: 0.592, tint: [1.0, 0.90, 0.75] }, // B고리
+  { to: RING_EDGES.aIn,  w: 0.129, tint: [1.0, 0.94, 0.86] }, // 카시니 간극
+  { to: Infinity,        w: 0.440, tint: [1.0, 0.90, 0.76] }, // A고리
 ];
 
 export function ringAlbedo(r) {

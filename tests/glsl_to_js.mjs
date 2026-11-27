@@ -1,5 +1,5 @@
 // GLSL 함수 문자열 → JS 함수 묶음 (tests/rings_glsl.test.mjs가 셰이더 식을 rings.js와 대조할 때 쓴다)
-// 다룰 수 있는 것: float·bool·vec2/3/4 타입, 스칼라 사칙연산, vec 생성자, dot·length·max·min·abs·exp·sqrt, 한 글자 스위즐(.x .y .z .w).
+// 다룰 수 있는 것: float·bool·vec2/3/4 타입, 스칼라 사칙연산, vec 생성자, dot·length·max·min·abs·exp·sqrt·pow·sin·cos·acos·log, 한 글자 스위즐(.x .y .z .w).
 // 그 밖의 것(여러 글자 스위즐·벡터 사칙연산·int·mat·텍스처)을 만나면 조용히 틀린 값을 내지 않고 오류를 던진다.
 
 const TYPE = '(?:float|bool|vec2|vec3|vec4)';
@@ -26,7 +26,7 @@ export function glslToJs(src) {
   const V = (...a) => a, dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0), length = a => Math.sqrt(dot(a, a));
   // GLSL 함수끼리 서로 부를 수 있게 이름을 fns에서 찾는다
   const body = `with (fns) { ${js} }`;
-  new Function('fns', 'V', 'dot', 'length', 'max', 'min', 'abs', 'exp', 'sqrt', body)(
-    fns, V, dot, length, Math.max, Math.min, Math.abs, Math.exp, Math.sqrt);
+  new Function('fns', 'V', 'dot', 'length', 'max', 'min', 'abs', 'exp', 'sqrt', 'pow', 'sin', 'cos', 'acos', 'log', body)(
+    fns, V, dot, length, Math.max, Math.min, Math.abs, Math.exp, Math.sqrt, Math.pow, Math.sin, Math.cos, Math.acos, Math.log);
   return fns;
 }

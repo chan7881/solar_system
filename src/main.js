@@ -1,7 +1,7 @@
 // 화면 — 크기·거리 모두 실제 비율(km). 초점 천체를 원점에 두고 그린다(위치 계산은 JS 배정밀도, 그리기 직전에 뺀다).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
-import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation, raDecToScene } from './ephemeris.js';
+import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation, raDecToScene, rotationAngles } from './ephemeris.js';
 import { RING_EDGES, ringSlantLevels } from './rings.js';
 import { NIGHT_GLSL, RIM_GLSL } from './atmosphere.js';
 import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, RING_SLANT_GLSL, ringAlbedoGLSL } from './rings_glsl.js';
@@ -12,9 +12,11 @@ import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples,
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
 import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
 import { refDistance, lightScale } from './exposure.js';
-import { PV, surfaceGain, colorStats, albedoRef, albedoRatio } from './albedo.js';
+import { PV, surfaceGain, colorStats, albedoRef, albedoRatio, realToMap } from './albedo.js';
 import { MAP_STATS } from './map_stats.js';
 import { LIMB_GLSL } from './sun.js';
+import { PHASE_GLSL } from './phase.js';
+import { RING_SETS, buildProfile, dustMipLevels, adamsArcLon, localPhiOfLon, ADAMS_ARC_GLSL, ADAMS_ARC_FD, NEPTUNE_RINGS } from './jovian_rings.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
 import { HAUMEA_POLE, HAUMEA_RING } from './dwarfs.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
@@ -177,7 +179,8 @@ const bodies = ALL.map(b => {
   const small = isSmallBody(b.key);
   // 밝기 배율(albedo.js): 지도·단색의 밝기 기준을 실제 반사율 비로 맞춘다 — gain은 혼자 볼 때 화면 평균을 DISPLAY_MEAN으로, ref는 초점 대비 비
   const sg = b.key === 'sun' ? { gain: 1, display: 1 } : surfaceGain(b.key, MAP_STATS[b.key] ?? colorStats(b.color));
-  const albedo = { gain: sg.gain, ref: b.key === 'sun' ? NaN : albedoRef(PV[b.key], sg.display) };
+  const albedo = { gain: sg.gain, ref: b.key === 'sun' ? NaN : albedoRef(PV[b.key], sg.display),
+    ring: b.key === 'sun' ? 1 : realToMap(PV[b.key], MAP_STATS[b.key] ?? colorStats(b.color)) }; // ring: 고리 빛(실제 I/F)을 이 몸체 지도 눈금으로
   return { ...b, reach: SHAPE_REACH[b.key] ?? b.reach ?? b.radius, mesh, trail, orbitLine, albedo, expo: { value: 1 }, // expo: 햇빛 노출 배율(exposure.js) — 재질·고리·구름·가장자리 빛이 같이 쓴다
     helio: small ? smallBodyHelio : heliocentric, orbit: small ? smallBodyTrail : orbitTrail, pos: [0, 0, 0], trailJd: NaN, moonTrail: b.parent ? moonTrailCache(b.key, TRAIL_N) : null };
 });
@@ -190,7 +193,7 @@ for (const k of SHAPED) loadShape(byKey[k]);
 const ringU = {
   uTauA: { value: null }, uTauB: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
   uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
-  uRe: { value: byKey.saturn.re }, uRp: { value: byKey.saturn.rp }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
+  uRe: { value: byKey.saturn.re }, uRp: { value: byKey.saturn.rp }, uLight: { value: 3 / Math.PI * byKey.saturn.albedo.ring }, // 해 빛 세기 3(PointLight)과 같은 눈금 × 실제 I/F → 토성 지도 눈금(albedo.js realToMap)
   uExpo: byKey.saturn.expo,
   uShadowOn: { value: 1 }, // 「그림자」 레이어 — 토성 그림자(고리 위)·고리 그림자(토성 위)
 };
@@ -230,6 +233,7 @@ const ringMat = new THREE.ShaderMaterial({
     ${RING_LIGHT_GLSL}
     ${RING_SLANT_GLSL}
     ${RING_ALBEDO_GLSL}
+    ${PHASE_GLSL}
     uniform vec3 uCamL; uniform float uRe, uRp, uLight, uExpo;
     varying vec3 vP;
     void main() {
@@ -240,6 +244,7 @@ const ringMat = new THREE.ShaderMaterial({
       vec3 v = normalize(uCamL - vP);
       vec2 tf = ringViewSlant(ta, tb, v, uSunL);
       float T = tf.x, F = tf.y;
+      F *= saturnPhaseRatio(acos(clamp(dot(v, uSunL), -1.0, 1.0))); // 위상 함수(phase.js — Dones et al. 1993 A고리 멱함수, α = 0에서 1)
       if (uShadowOn > 0.5 && inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0; // 토성 그림자
       vec4 a = ringAlbedo(r);
       gl_FragColor = vec4(a.rgb * a.a * F * uLight * uExpo, 1.0 - T);
@@ -407,24 +412,29 @@ fetch('textures/saturn_rings.json').then(r => r.json()).then(p => {
   // 멀리서 보면 수천 줄의 결이 화소보다 가늘어 물결무늬가 생긴다 → 밉맵. 투과율로 평균한 단계를 CPU에서 만든다
   // (GPU 자동 밉맵은 τ를 그대로 평균해 간극이 메워지고, R16F는 모바일에서 자동 생성이 안 될 수 있다)
   // 고리는 알갱이 무리라 칸을 줄일 때 빛길 기울기마다 평균이 다르다 → 기울기 8개의 τ_eff(rings.js ringSlantLevels)를 RGBA 두 장(기울기 0~3, 4~7)에
-  const levels = ringSlantLevels(p.tau);
-  const pick = (l, h) => Uint16Array.from({ length: l.length / 2 }, (_, i) => THREE.DataUtils.toHalfFloat(l[(i >> 2) * 8 + h * 4 + (i & 3)]));
-  const mk = h => {
-    const mips = levels.map(l => ({ data: pick(l, h), width: l.length / 8, height: 1 }));
-    const tex = new THREE.DataTexture(mips[0].data, p.n, 1, THREE.RGBAFormat, THREE.HalfFloatType);
-    tex.mipmaps = mips;
-    tex.magFilter = THREE.LinearFilter;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
-    tex.generateMipmaps = false;
-    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.needsUpdate = true;
-    return tex;
-  };
-  ringU.uTauA.value = mk(0); ringU.uTauB.value = mk(1); ringU.uR0.value = p.r0; ringU.uR1.value = p.r1;
+  [ringU.uTauA.value, ringU.uTauB.value] = slantTextures(p.tau); ringU.uR0.value = p.r0; ringU.uR1.value = p.r1;
   // 고리 경계 밖(단면 양 끝의 잡음 수준 τ)은 그리지 않는다. XY → 로컬 XZ(법선 +Y = 북극)
   ringMesh.geometry = new THREE.RingGeometry(RING_EDGES.cIn, RING_EDGES.aOut, 720, 1).rotateX(-Math.PI / 2);
   ringMesh.visible = true;
 }).catch(e => console.warn('토성 고리 단면을 못 불러옴 — 고리 없이 둔다', e));
+
+// 밉맵을 손으로 넣은 1줄짜리 반정밀 RGBA 텍스처. mips[k] = 단계 k의 Float32Array(칸 × 4)
+function mipTexture(mips) {
+  const lv = mips.map(a => ({ data: Uint16Array.from(a, x => THREE.DataUtils.toHalfFloat(x)), width: a.length / 4, height: 1 }));
+  const tex = new THREE.DataTexture(lv[0].data, lv[0].width, 1, THREE.RGBAFormat, THREE.HalfFloatType);
+  tex.mipmaps = lv;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+// 단면 τ → 기울기 8개 τ_eff 텍스처 두 장(rings.js ringSlantLevels — 0~3, 4~7). scale: 반정밀에 담기 전 곱하는 수
+function slantTextures(tau, scale = 1) {
+  const levels = ringSlantLevels(tau);
+  return [0, 1].map(h => mipTexture(levels.map(l => Float32Array.from({ length: l.length / 2 }, (_, i) => scale * l[(i >> 2) * 8 + h * 4 + (i & 3)]))));
+}
 
 const qInv = new THREE.Quaternion();
 function updateRings() {
@@ -432,6 +442,98 @@ function updateRings() {
   qInv.copy(m.quaternion).invert();
   ringU.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
   ringU.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
+}
+
+// ---------- 목성·천왕성·해왕성 고리 ----------
+// 고리 표·단면·애덤스 호는 src/jovian_rings.js, 위상 함수는 src/phase.js(수치 출처 textures/출처.md 「목성형 고리」).
+// 빛·비침 식은 토성 고리와 같고(ringViewSlant), 반사율만 위상각에 따라 큰 알갱이·먼지를 섞은 W(α).
+// 실제 밝기로는 거의 안 보인다 → 레이어 「고리 강조」가 빛만 RING_BOOST배(τ·비침·그림자는 그대로).
+// 한계: 고리가 행성 표면에 드리우는 그림자는 넣지 않았다(행성이 고리에 드리우는 그림자만).
+const RING_BOOST = { jupiter: 3e4, uranus: 30, neptune: 300 };
+// 색: 목성·해왕성 고리는 「매우 붉다」(de Pater et al. 2018 두 장 모두) — 화면 색은 근사, 천왕성은 회색
+const RING_TINT = { jupiter: [1.0, 0.82, 0.66], uranus: [1, 1, 1], neptune: [1.0, 0.82, 0.66] };
+// 목성 고리는 τ가 1e-9~6e-6이라 반정밀(가장 작은 수 약 6e-8)에 못 담는다 → 1e4배로 담고 셰이더에서 나눈다(모두 얇아 선형)
+const TAU_SCALE = { jupiter: 1e4, uranus: 1, neptune: 1 };
+const jRings = [];
+for (const [key, sets] of Object.entries(RING_SETS)) {
+  const b = byKey[key];
+  for (const set of sets) {
+    const p = buildProfile(set.rings, set.r0, set.r1, set.n), sc = TAU_SCALE[key];
+    const [tA, tB] = slantTextures(p.tau, sc);
+    const dTex = mipTexture(dustMipLevels(p.tau, p.dust).map(d => Float32Array.from({ length: d.length * 4 }, (_, i) => d[i >> 2])));
+    const tint = new THREE.Color().setRGB(...RING_TINT[key], THREE.SRGBColorSpace);
+    const u = {
+      uTauA: { value: tA }, uTauB: { value: tB }, uDust: { value: dTex }, uR0: { value: p.r0 }, uR1: { value: p.r1 }, uTauScale: { value: sc },
+      uArcA: { value: tA }, uArcB: { value: tB }, uArcOn: { value: 0 }, uArcPhi: { value: 0 },
+      uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
+      uRe: { value: b.re }, uRp: { value: b.rp }, uLight: { value: 3 / Math.PI * b.albedo.ring }, uExpo: b.expo, uShadowOn: ringU.uShadowOn,
+      uLargeKind: { value: set.large.kind === 'jupiter' ? 1 : 0 }, uW0: { value: set.large.w0 ?? 0 },
+      uTint: { value: new THREE.Vector3(tint.r, tint.g, tint.b) }, uBoost: { value: 1 },
+    };
+    if (set.arcs) { // 애덤스 고리만 호 τ(0.1)로 채운 단면 — 셰이더가 경도에 따라 (호 τ / 0.1)배 더한다
+      const adams = NEPTUNE_RINGS.find(g => g.name === '애덤스');
+      [u.uArcA.value, u.uArcB.value] = slantTextures(buildProfile([{ ...adams, tau: 0.1 }], set.r0, set.r1, set.n).tau);
+      u.uArcOn.value = 1;
+    }
+    const mat = new THREE.ShaderMaterial({
+      uniforms: u,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+      vertexShader: ringMat.vertexShader,
+      fragmentShader: /* glsl */`
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        ${RING_LIGHT_GLSL}
+        ${RING_SLANT_GLSL}
+        ${PHASE_GLSL}
+        ${ADAMS_ARC_GLSL}
+        uniform sampler2D uTauA, uTauB, uDust, uArcA, uArcB;
+        uniform vec3 uSunL, uCamL, uTint;
+        uniform float uR0, uR1, uTauScale, uArcOn, uArcPhi, uRe, uRp, uLight, uExpo, uShadowOn, uLargeKind, uW0, uBoost;
+        varying vec3 vP;
+        void main() {
+          #include <logdepthbuf_fragment>
+          float r = length(vP.xz);
+          if (r < uR0 || r > uR1) discard;
+          vec2 uv = vec2((r - uR0) / (uR1 - uR0), 0.5);
+          vec4 ta = texture2D(uTauA, uv) / uTauScale, tb = texture2D(uTauB, uv) / uTauScale;
+          float fd = texture2D(uDust, uv).x;
+          if (uArcOn > 0.5) { // 애덤스 고리 호 — 프라테르니테 가운데부터 공전 방향으로 잰 경도 차(°)
+            float dl = mod(degrees(uArcPhi - atan(vP.z, vP.x)) + 180.0, 360.0) - 180.0;
+            float k = adamsArcTau(dl) / 0.1;
+            if (k > 0.0) {
+              vec4 aa = texture2D(uArcA, uv) * k, ab = texture2D(uArcB, uv) * k;
+              fd = (ta.x * fd + aa.x * ${ADAMS_ARC_FD.toFixed(2)}) / max(1e-12, ta.x + aa.x);
+              ta += aa; tb += ab;
+            }
+          }
+          if (ta.x <= 0.0) discard;
+          vec3 v = normalize(uCamL - vP);
+          vec2 tf = ringViewSlant(ta, tb, v, uSunL);
+          float F = tf.y * mixedW(acos(clamp(dot(v, uSunL), -1.0, 1.0)), fd, uLargeKind, uW0);
+          if (uShadowOn > 0.5 && inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0;
+          gl_FragColor = vec4(uTint * (F * uLight * uExpo * uBoost), 1.0 - tf.x);
+          #include <colorspace_fragment>
+        }`,
+    });
+    const lo = Math.max(set.r0, Math.min(...set.rings.map(g => g.r0 ?? g.r - g.w / 2)));
+    const hi = Math.min(set.r1, Math.max(...set.rings.map(g => g.r1 ?? g.r + g.w / 2)));
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(lo, hi, 1440, 1).rotateX(-Math.PI / 2), mat);
+    mesh.renderOrder = 2.5;
+    b.mesh.add(mesh);
+    jRings.push({ key, u, mesh });
+  }
+}
+function updateJovianRings(jd) {
+  for (const { key, u } of jRings) {
+    const m = byKey[key].mesh;
+    if (!m.visible) continue;
+    qInv.copy(m.quaternion).invert();
+    u.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
+    u.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
+    u.uBoost.value = state.layers.ringBoost ? RING_BOOST[key] : 1;
+    if (u.uArcOn.value) u.uArcPhi.value = localPhiOfLon(rotationAngles(key, jd).W, adamsArcLon(jd));
+  }
 }
 
 // ---------- 하우메아 자세·고리 ----------
@@ -447,7 +549,7 @@ function updateRings() {
 const hRingU = {
   uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
   uAbc: { value: new THREE.Vector3(byKey.haumea.abc[0], byKey.haumea.abc[2], byKey.haumea.abc[1]) }, // 로컬 x·y·z 반지름
-  uLight: ringU.uLight, uExpo: byKey.haumea.expo, uShadowOn: ringU.uShadowOn,
+  uLight: { value: 3 / Math.PI * byKey.haumea.albedo.ring }, uExpo: byKey.haumea.expo, uShadowOn: ringU.uShadowOn,
 };
 const hRingMat = new THREE.ShaderMaterial({
   uniforms: hRingU,
@@ -1972,7 +2074,7 @@ function step(now = performance.now()) {
   updateClouds(jd);
   updateComets(jd);
   updateEarthAtmo();
-  updateRings(); updateHaumeaRing(); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
+  updateRings(); updateHaumeaRing(); updateJovianRings(jd); // 이번 장면의 카메라 위치로(고리 앞·뒷면 판정)
   updateSky(updateGroupLabels(updateLabels()));
   updateDist();
   updateExt(fp);
@@ -2043,4 +2145,4 @@ booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { flareState, controls, comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };
+window.__app = { flareState, controls, comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene, RING_BOOST };
