@@ -16,7 +16,7 @@ import { PV, surfaceGain, colorStats, albedoRef, albedoRatio, realToMap } from '
 import { MAP_STATS } from './map_stats.js';
 import { LIMB_GLSL } from './sun.js';
 import { PHASE_GLSL } from './phase.js';
-import { RING_SETS, buildProfile, dustMipLevels, adamsArcLon, localPhiOfLon, ADAMS_ARC_GLSL, ADAMS_ARC_FD, NEPTUNE_RINGS } from './jovian_rings.js';
+import { RING_SETS, ringEdgeRadii, buildProfile, dustMipLevels, adamsArcLon, localPhiOfLon, ADAMS_ARC_GLSL, ADAMS_ARC_FD, NEPTUNE_RINGS } from './jovian_rings.js';
 import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
 import { HAUMEA_POLE, HAUMEA_RING } from './dwarfs.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
@@ -251,9 +251,22 @@ const ringMat = new THREE.ShaderMaterial({
       #include <colorspace_fragment>
     }`,
 });
+// 고리 가장자리를 궤도선처럼 그린다(레이어 「고리 강조」, 처음 끔). 목성형·하우메아는 좁은 고리를 한 줄로(ringEdgeRadii). 고리 평면(로컬 XZ)의 원, 반지름은 km, 행성 자세를 따른다.
+const ringLines = [];
+function ringEdgeLines(parent, radii, color) {
+  const c = new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.35);
+  for (const r of [...new Set(radii)]) {
+    const pts = [];
+    for (let i = 0; i <= 360; i++) pts.push(new THREE.Vector3(r * Math.cos(i * Math.PI / 180), 0, r * Math.sin(i * Math.PI / 180)));
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), uiAlpha(new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: 0.7, depthWrite: false })));
+    line.frustumCulled = false; line.renderOrder = 2.6; line.visible = false;
+    parent.add(line); ringLines.push(line);
+  }
+}
 const ringMesh = new THREE.Mesh(new THREE.BufferGeometry(), ringMat);
 ringMesh.visible = false;
 byKey.saturn.mesh.add(ringMesh);
+ringEdgeLines(byKey.saturn.mesh, Object.values(RING_EDGES), byKey.saturn.color);
 // 고리는 깊이를 안 쓰므로 궤도선(2)보다 나중에 그려야 고리 뒤의 선이 비침만큼 가려진다(먼저 그리면 선이 고리 위에 그대로 덮인다).
 // 고리 앞을 지나는 선은 토성 자신의 궤도선뿐인데, 고리가 크게 보일 때는 이미 흐려져 사라진다(step의 궤도선 흐리기). 거리 선(3)은 그 뒤
 ringMesh.renderOrder = 2.5;
@@ -447,9 +460,8 @@ function updateRings() {
 // ---------- 목성·천왕성·해왕성 고리 ----------
 // 고리 표·단면·애덤스 호는 src/jovian_rings.js, 위상 함수는 src/phase.js(수치 출처 textures/출처.md 「목성형 고리」).
 // 빛·비침 식은 토성 고리와 같고(ringViewSlant), 반사율만 위상각에 따라 큰 알갱이·먼지를 섞은 W(α).
-// 실제 밝기로는 거의 안 보인다 → 레이어 「고리 강조」가 빛만 RING_BOOST배(τ·비침·그림자는 그대로).
+// 밝기는 실제 값 그대로(배율 없음). 가장자리는 레이어 「고리 강조」가 궤도선처럼 그린다(ringEdgeLines).
 // 한계: 고리가 행성 표면에 드리우는 그림자는 넣지 않았다(행성이 고리에 드리우는 그림자만).
-const RING_BOOST = { jupiter: 3e4, uranus: 30, neptune: 300 };
 // 색: 목성·해왕성 고리는 「매우 붉다」(de Pater et al. 2018 두 장 모두) — 화면 색은 근사, 천왕성은 회색
 const RING_TINT = { jupiter: [1.0, 0.82, 0.66], uranus: [1, 1, 1], neptune: [1.0, 0.82, 0.66] };
 // 목성 고리는 τ가 1e-9~6e-6이라 반정밀(가장 작은 수 약 6e-8)에 못 담는다 → 1e4배로 담고 셰이더에서 나눈다(모두 얇아 선형)
@@ -468,7 +480,7 @@ for (const [key, sets] of Object.entries(RING_SETS)) {
       uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
       uRe: { value: b.re }, uRp: { value: b.rp }, uLight: { value: 3 / Math.PI * b.albedo.ring }, uExpo: b.expo, uShadowOn: ringU.uShadowOn,
       uLargeKind: { value: set.large.kind === 'jupiter' ? 1 : 0 }, uW0: { value: set.large.w0 ?? 0 },
-      uTint: { value: new THREE.Vector3(tint.r, tint.g, tint.b) }, uBoost: { value: 1 },
+      uTint: { value: new THREE.Vector3(tint.r, tint.g, tint.b) },
     };
     if (set.arcs) { // 애덤스 고리만 호 τ(0.1)로 채운 단면 — 셰이더가 경도에 따라 (호 τ / 0.1)배 더한다
       const adams = NEPTUNE_RINGS.find(g => g.name === '애덤스');
@@ -489,7 +501,7 @@ for (const [key, sets] of Object.entries(RING_SETS)) {
         ${ADAMS_ARC_GLSL}
         uniform sampler2D uTauA, uTauB, uDust, uArcA, uArcB;
         uniform vec3 uSunL, uCamL, uTint;
-        uniform float uR0, uR1, uTauScale, uArcOn, uArcPhi, uRe, uRp, uLight, uExpo, uShadowOn, uLargeKind, uW0, uBoost;
+        uniform float uR0, uR1, uTauScale, uArcOn, uArcPhi, uRe, uRp, uLight, uExpo, uShadowOn, uLargeKind, uW0;
         varying vec3 vP;
         void main() {
           #include <logdepthbuf_fragment>
@@ -512,7 +524,7 @@ for (const [key, sets] of Object.entries(RING_SETS)) {
           vec2 tf = ringViewSlant(ta, tb, v, uSunL);
           float F = tf.y * mixedW(acos(clamp(dot(v, uSunL), -1.0, 1.0)), fd, uLargeKind, uW0);
           if (uShadowOn > 0.5 && inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0;
-          gl_FragColor = vec4(uTint * (F * uLight * uExpo * uBoost), 1.0 - tf.x);
+          gl_FragColor = vec4(uTint * (F * uLight * uExpo), 1.0 - tf.x);
           #include <colorspace_fragment>
         }`,
     });
@@ -522,6 +534,7 @@ for (const [key, sets] of Object.entries(RING_SETS)) {
     mesh.renderOrder = 2.5;
     b.mesh.add(mesh);
     jRings.push({ key, u, mesh });
+    ringEdgeLines(b.mesh, ringEdgeRadii(set.rings), b.color);
   }
 }
 function updateJovianRings(jd) {
@@ -531,7 +544,6 @@ function updateJovianRings(jd) {
     qInv.copy(m.quaternion).invert();
     u.uSunL.value.copy(byKey.sun.mesh.position).sub(m.position).normalize().applyQuaternion(qInv);
     u.uCamL.value.copy(camera.position).sub(m.position).applyQuaternion(qInv);
-    u.uBoost.value = state.layers.ringBoost ? RING_BOOST[key] : 1;
     if (u.uArcOn.value) u.uArcPhi.value = localPhiOfLon(rotationAngles(key, jd).W, adamsArcLon(jd));
   }
 }
@@ -583,6 +595,7 @@ const hRingMat = new THREE.ShaderMaterial({
 const hRingMesh = new THREE.Mesh(new THREE.RingGeometry(HAUMEA_RING.rIn, HAUMEA_RING.rOut, 720, 1).rotateX(-Math.PI / 2), hRingMat);
 hRingMesh.renderOrder = 2.5;
 byKey.haumea.mesh.add(hRingMesh);
+ringEdgeLines(byKey.haumea.mesh, ringEdgeRadii([{ r0: HAUMEA_RING.rIn, r1: HAUMEA_RING.rOut }]), byKey.haumea.color);
 function updateHaumeaRing() {
   const m = byKey.haumea.mesh;
   qInv.copy(m.quaternion).invert();
@@ -1202,6 +1215,7 @@ function setLayers(patch) {
   legend.hidden = !L.groupColors;
   document.body.classList.toggle('ui-off', !L.ui);
   ringU.uShadowOn.value = L.shadows ? 1 : 0;
+  for (const l of ringLines) l.visible = !!L.ringEdges;
   flatU.value = L.shadows ? 0 : 1;
   paintCloud();
 }
@@ -2145,4 +2159,4 @@ booted = true;
 renderer.setAnimationLoop(t => { step(t); draw(); });
 
 // 자동 확인용(백그라운드 탭에서는 requestAnimationFrame이 돌지 않는다)
-window.__app = { flareState, controls, comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene, RING_BOOST };
+window.__app = { flareState, controls, comets, renderer, glowRT, state, step, draw, flyTo, camera, bodies: byKey, RATES, applyAtmosphere, setSidebar, setLayers, setLayer, cloud, oort, skyLines, VIEWS, chooseView, choose, setTool, distLine, cmpScene };

@@ -1,7 +1,7 @@
 // 목성형 고리(src/jovian_rings.js) — 단면이 등가 깊이를 지키는가, 애덤스 호 자리·방향, GLSL 대조
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RING_SETS, buildProfile, dustMipLevels, adamsArcLon, adamsArcTau, localPhiOfLon, ADAMS_ARC_GLSL, ADAMS_ARCS, URANUS_RINGS, NEPTUNE_RINGS } from '../src/jovian_rings.js';
+import { RING_SETS, ringEdgeRadii, buildProfile, dustMipLevels, adamsArcLon, adamsArcTau, localPhiOfLon, ADAMS_ARC_GLSL, ADAMS_ARCS, URANUS_RINGS, NEPTUNE_RINGS } from '../src/jovian_rings.js';
 import { bodyAxes, rotationAngles } from '../src/ephemeris.js';
 import { glslToJs } from './glsl_to_js.mjs';
 
@@ -94,4 +94,17 @@ test('해왕성 고리 표: 애덤스·르베리에 자리(Porco et al. 1995)', 
   const by = Object.fromEntries(NEPTUNE_RINGS.map(g => [g.name, g]));
   assert.equal(by['애덤스'].r, 62933);
   assert.equal(by['르베리에'].r, 53200);
+});
+
+test('고리 강조 선: 좁은 고리는 가운데 한 줄, 넓은 고리는 두 가장자리', () => {
+  // 천왕성 엡실론(51149 ± 29km)은 한 줄, 제타(39600 ± 1750km)는 두 줄
+  const eps = URANUS_RINGS.find(g => g.name === '엡실론'), zeta = URANUS_RINGS.find(g => g.name === '제타');
+  assert.deepEqual(ringEdgeRadii([eps]), [51149]);
+  assert.deepEqual(ringEdgeRadii([zeta]), [37850, 41350]);
+  // 하우메아(2287 ± 35km, 폭 3%)는 한 줄, 경계(폭 4%)는 두 줄
+  assert.deepEqual(ringEdgeRadii([{ r0: 2252, r1: 2322 }]), [2287]);
+  assert.deepEqual(ringEdgeRadii([{ r: 1000, w: 40 }]), [980, 1020]);
+  // 선 개수: 천왕성 28 · 해왕성 5(라셀 안쪽 끝 = 르베리에 자리라 한 번) · 목성 6
+  const n = k => RING_SETS[k].reduce((s, set) => s + ringEdgeRadii(set.rings).length, 0);
+  assert.equal(n('uranus'), 28); assert.equal(n('neptune'), 5); assert.equal(n('jupiter'), 6);
 });

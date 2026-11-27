@@ -158,6 +158,18 @@ export function dustMipLevels(tau, dust) {
   return out;
 }
 
+// 레이어 「고리 강조」의 선 반지름 — 폭이 반지름의 NARROW_EDGE배보다 좁은 고리는 가운데 한 줄(두 가장자리가 겹쳐 두 겹으로 보이므로),
+// 넓은 고리는 안쪽·바깥 가장자리 두 줄. 고리는 { r, w } 또는 { r0, r1 }. 같은 반지름은 한 번만, 작은 것부터
+export const NARROW_EDGE = 0.04;
+export function ringEdgeRadii(rings) {
+  const out = new Set();
+  for (const g of rings) {
+    const a = g.r0 ?? g.r - g.w / 2, b = g.r1 ?? g.r + g.w / 2, m = (a + b) / 2;
+    if (b - a < NARROW_EDGE * m) out.add(m); else { out.add(a); out.add(b); }
+  }
+  return [...out].sort((x, y) => x - y);
+}
+
 // 행성별 고리 묶음 — 메시 하나에 단면 하나. ⚠️ 칸 수 n은 2의 거듭제곱 — 밉맵 단계 폭을 반올림(ceil)으로 줄이는데
 // WebGL은 내림(floor) 폭을 요구해, 맞지 않으면 텍스처가 「불완전」해 모두 0으로 읽혀 고리가 조용히 사라진다.
 // 천왕성은 좁은 고리(0.75km 칸)와 넓은 먼지 고리(10km 칸)를 따로 둔다

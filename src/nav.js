@@ -72,7 +72,7 @@ export const LAYERS = [
   { key: 'icons', name: '아이콘', on: true },
   { key: 'nightLights', name: '지구 밤 불빛', on: true },
   { key: 'shadows', name: '그림자', on: true },
-  { key: 'ringBoost', name: '고리 강조', on: false },
+  { key: 'ringEdges', name: '고리 강조', on: false },
   { key: 'sunFlare', name: '태양 렌즈 효과', on: true },
 ];
 export const defaultLayers = () => Object.fromEntries(LAYERS.map(l => [l.key, l.on]));
