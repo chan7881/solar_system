@@ -135,3 +135,50 @@ test('밉맵: 투과율로 평균 — 불투명(τ=5)과 빈틈(τ=0)을 섞으�
   const P = ringMipLevels(profile.tau), lv = P[6], at = r => lv[Math.floor((r - profile.r0) / (profile.r1 - profile.r0) * lv.length)];
   assert.ok(at(119800) < 0.5 && at(105000) > 2, `간극 ${at(119800)} B ${at(105000)}`);
 });
+
+// 고리는 판이 아니라 알갱이 무리 — 한 칸에 고리띠와 틈이 섞이면 비스듬한 빛은 틈으로 샌다(rings.js ringSlantLevels)
+const zoneT = (levels, lv, mu, a, b, f) => { // 그 구역 칸들의 평균 투과율: f(칸 번호, 단계) → 투과율
+  let sum = 0, n = 0; const s = 1 << lv, dr = (profile.r1 - profile.r0) / profile.n;
+  for (let k = 0; k < profile.n / s; k++) { const r = profile.r0 + (k + 0.5) * s * dr; if (r < a || r > b) continue; sum += f(k, s); n++; }
+  return sum / n;
+};
+const trueT = mu => (k, s) => { let m = 0; for (let j = k * s; j < (k + 1) * s; j++) m += Math.exp(-profile.tau[j] / mu); return m / s; };
+
+test('기울기 밉맵: 0단계는 모든 기울기가 원래 τ, 불투명(τ=5)·빈틈(τ=0) 반반은 μ=0.1에서도 반쯤 비친다', async () => {
+  const { ringSlantLevels, ringSlantTau, RING_SLANT_MU } = await import('../src/rings.js');
+  const L = ringSlantLevels([5, 0, 5, 0]);
+  assert.deepEqual(L.map(l => l.length / RING_SLANT_MU.length), [4, 2, 1]);
+  for (let j = 0; j < 8; j++) assert.ok(Math.abs(L[0][j] - 5) < 1e-5 && Math.abs(L[0][8 + j]) < 1e-9);
+  for (const mu of RING_SLANT_MU) { // 기울기마다 정확히: (e^{−5/μ} + 1)/2
+    const T = Math.exp(-ringSlantTau(L[1].slice(0, 8), mu) / mu);
+    assert.ok(Math.abs(T - (Math.exp(-5 / mu) + 1) / 2) < 1e-4, `μ=${mu} T=${T}`);
+  }
+  // 한 τ로 평균한 예전 방식은 μ=0.1에서 0.1%만 비친다
+  const { ringMipLevels } = await import('../src/rings.js');
+  assert.ok(Math.exp(-ringMipLevels([5, 0, 5, 0])[1][0] / 0.1) < 0.002);
+});
+
+test('기울기 밉맵: 실제 단면을 줄여도 비스듬한 투과율이 칸 안 평균과 맞는다(최대 오차 0.04, 기울기 사이 보간 포함)', async () => {
+  const { ringSlantLevels, ringSlantTau } = await import('../src/rings.js');
+  const L = ringSlantLevels(profile.tau);
+  let worst = 0, at;
+  for (const lv of [1, 3, 5, 7, 9]) for (const mu of [0.7, 0.45, 0.2, 0.1, 0.05, 0.02, 0.008, 0.003]) {
+    const s = 1 << lv, tm = trueT(mu);
+    for (let k = 0; k < profile.n / s; k++) {
+      const e = Math.abs(Math.exp(-ringSlantTau(L[lv].slice(8 * k, 8 * k + 8), mu) / mu) - tm(k, s));
+      if (e > worst) { worst = e; at = `lv${lv} μ${mu} k${k}`; }
+    }
+  }
+  assert.ok(worst < 0.04, `최대 오차 ${worst} (${at})`);
+});
+
+test('고리 그림자(해 고도 μ0=0.1, 1km 칸 단계): A고리·카시니 간극은 틈으로 빛이 새고 B고리는 막힌다', async () => {
+  const { ringSlantLevels, ringSlantTau, ringMipLevels } = await import('../src/rings.js');
+  const L = ringSlantLevels(profile.tau), O = ringMipLevels(profile.tau), lv = 6, mu = 0.1;
+  const slant = (k) => Math.exp(-ringSlantTau(L[lv].slice(8 * k, 8 * k + 8), mu) / mu);
+  const A = [122053, 136774], CD = [117516, 122053], B = [95000, 115000];
+  const zs = z => zoneT(L, lv, mu, ...z, slant), zt = z => zoneT(L, lv, mu, ...z, trueT(mu)), zo = z => zoneT(L, lv, mu, ...z, k => Math.exp(-O[lv][k] / mu));
+  for (const z of [A, CD]) assert.ok(Math.abs(zs(z) - zt(z)) < 0.1 * zt(z), `${z}: 새 ${zs(z)} 참 ${zt(z)}`);
+  assert.ok(zt(A) > 0.015 && zo(A) < 0.3 * zt(A), `A고리: 참 ${zt(A)} 예전 ${zo(A)}`); // 예전 방식은 A고리 그림자가 거의 꽉 막힘
+  assert.ok(zs(CD) > zs(A) && zs(A) > 10 * zs(B), `간극 ${zs(CD)} A ${zs(A)} B ${zs(B)}`);
+});

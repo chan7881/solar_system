@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { AU_KM, BODIES, VALID_FROM, VALID_TO, heliocentric, orbitTrail, julianDateTT, eclipticToScene, bodyAxes, ellipsoidRadius, hasRotation, raDecToScene } from './ephemeris.js';
-import { RING_EDGES, ringMipLevels } from './rings.js';
+import { RING_EDGES, ringSlantLevels } from './rings.js';
 import { NIGHT_GLSL, RIM_GLSL } from './atmosphere.js';
-import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, ringAlbedoGLSL } from './rings_glsl.js';
+import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, RING_SLANT_GLSL, ringAlbedoGLSL } from './rings_glsl.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
 import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
@@ -188,7 +188,7 @@ for (const k of SHAPED) loadShape(byKey[k]);
 // 토성 몸체의 자식으로 적도면(로컬 XZ)에 둔다. 밝기·비침·그림자 식은 src/rings_glsl.js(테스트가 src/rings.js와 대조).
 // 계산은 토성 로컬 좌표(km): 고리면 법선 = +Y, 해·카메라 방향은 매 장면 CPU에서 로컬로 바꿔 넣는다.
 const ringU = {
-  uTau: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
+  uTauA: { value: null }, uTauB: { value: null }, uR0: { value: 0 }, uR1: { value: 1 },
   uSunL: { value: new THREE.Vector3(1, 0, 0) }, uCamL: { value: new THREE.Vector3(0, 1, 0) },
   uRe: { value: byKey.saturn.re }, uRp: { value: byKey.saturn.rp }, uLight: { value: 3 / Math.PI }, // 해 빛 세기 3(PointLight)과 같은 눈금
   uExpo: byKey.saturn.expo,
@@ -196,11 +196,16 @@ const ringU = {
 };
 const flatU = { value: 0 }; // 「그림자」를 끄면 1 — 모든 천체의 밤면을 N·L = 0.5 밝기까지 끌어올린다
 const RING_GLSL = /* glsl */`
-  uniform sampler2D uTau; uniform float uR0, uR1;
+  uniform sampler2D uTauA, uTauB; uniform float uR0, uR1;
   uniform vec3 uSunL; uniform float uShadowOn;
-  float ringTau(float r) {
-    if (r < uR0 || r > uR1) return 0.0;
-    return texture2D(uTau, vec2((r - uR0) / (uR1 - uR0), 0.5)).r;
+  // 반지름 r의 기울기별 τ_eff 여덟 개(rings.js ringSlantLevels) — 범위 밖은 0
+  vec4 ringTauA(float r) {
+    if (r < uR0 || r > uR1) return vec4(0.0);
+    return texture2D(uTauA, vec2((r - uR0) / (uR1 - uR0), 0.5));
+  }
+  vec4 ringTauB(float r) {
+    if (r < uR0 || r > uR1) return vec4(0.0);
+    return texture2D(uTauB, vec2((r - uR0) / (uR1 - uR0), 0.5));
   }`;
 // 색(tint)은 사진을 보고 고른 화면 색(sRGB)이라 선형 값으로 바꿔 넣는다
 const RING_ALBEDO_GLSL = ringAlbedoGLSL(t => { const c = new THREE.Color().setRGB(...t, THREE.SRGBColorSpace); return [c.r, c.g, c.b]; });
@@ -223,16 +228,17 @@ const ringMat = new THREE.ShaderMaterial({
     #include <logdepthbuf_pars_fragment>
     ${RING_GLSL}
     ${RING_LIGHT_GLSL}
+    ${RING_SLANT_GLSL}
     ${RING_ALBEDO_GLSL}
     uniform vec3 uCamL; uniform float uRe, uRp, uLight, uExpo;
     varying vec3 vP;
     void main() {
       #include <logdepthbuf_fragment>
       float r = length(vP.xz);
-      float tau = ringTau(r);
-      if (tau <= 0.0) discard;
+      vec4 ta = ringTauA(r), tb = ringTauB(r);
+      if (ta.x <= 0.0) discard;
       vec3 v = normalize(uCamL - vP);
-      vec2 tf = ringView(tau, v, uSunL);
+      vec2 tf = ringViewSlant(ta, tb, v, uSunL);
       float T = tf.x, F = tf.y;
       if (uShadowOn > 0.5 && inPlanetShadow(vP, uSunL, uRe, uRp)) F = 0.0; // 토성 그림자
       vec4 a = ringAlbedo(r);
@@ -250,13 +256,13 @@ ringMesh.renderOrder = 2.5;
 // 토성 표면에 지는 고리 그림자: 표면 점에서 해 쪽 빛줄기가 고리면을 지나는 반지름의 τ로 햇빛을 줄인다.
 // 햇빛(직접광)에만 곱한다 — 주변광은 남겨 밤 쪽과 같은 방식으로 어두워지게(해는 유일한 직접광)
 byKey.saturn.mesh.material.onBeforeCompile = sh => {
-  Object.assign(sh.uniforms, { uTau: ringU.uTau, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL, uShadowOn: ringU.uShadowOn });
+  Object.assign(sh.uniforms, { uTauA: ringU.uTauA, uTauB: ringU.uTauB, uR0: ringU.uR0, uR1: ringU.uR1, uSunL: ringU.uSunL, uShadowOn: ringU.uShadowOn });
   sh.vertexShader = 'varying vec3 vP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
-  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n${RING_SHADOW_GLSL}\n` +sh.fragmentShader.replace('#include <lights_fragment_end>', `
+  sh.fragmentShader = `varying vec3 vP;\n${RING_GLSL}\n${RING_SHADOW_GLSL}\n${RING_LIGHT_GLSL}\n${RING_SLANT_GLSL}\n` +sh.fragmentShader.replace('#include <lights_fragment_end>', `
     #include <lights_fragment_end>
     float ringR = ringShadowRadius(vP, uSunL);
     if (uShadowOn > 0.5 && ringR >= 0.0) {
-      float ringT = ringShadowT(ringTau(ringR), uSunL.y);
+      float ringT = ringShadowT(ringSlantTau(ringTauA(ringR), ringTauB(ringR), uSunL.y), uSunL.y); // 비스듬한 햇빛의 τ_eff — 틈새로 새는 빛
       reflectedLight.directDiffuse *= ringT;
       reflectedLight.directSpecular *= ringT;
     }`);
@@ -400,16 +406,21 @@ function updateEarthAtmo() {
 fetch('textures/saturn_rings.json').then(r => r.json()).then(p => {
   // 멀리서 보면 수천 줄의 결이 화소보다 가늘어 물결무늬가 생긴다 → 밉맵. 투과율로 평균한 단계를 CPU에서 만든다
   // (GPU 자동 밉맵은 τ를 그대로 평균해 간극이 메워지고, R16F는 모바일에서 자동 생성이 안 될 수 있다)
-  const half = a => Uint16Array.from(a, v => THREE.DataUtils.toHalfFloat(v));
-  const levels = ringMipLevels(p.tau);
-  const tex = new THREE.DataTexture(half(levels[0]), p.n, 1, THREE.RedFormat, THREE.HalfFloatType);
-  tex.mipmaps = levels.map(l => ({ data: half(l), width: l.length, height: 1 }));
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.generateMipmaps = false;
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.needsUpdate = true;
-  ringU.uTau.value = tex; ringU.uR0.value = p.r0; ringU.uR1.value = p.r1;
+  // 고리는 알갱이 무리라 칸을 줄일 때 빛길 기울기마다 평균이 다르다 → 기울기 8개의 τ_eff(rings.js ringSlantLevels)를 RGBA 두 장(기울기 0~3, 4~7)에
+  const levels = ringSlantLevels(p.tau);
+  const pick = (l, h) => Uint16Array.from({ length: l.length / 2 }, (_, i) => THREE.DataUtils.toHalfFloat(l[(i >> 2) * 8 + h * 4 + (i & 3)]));
+  const mk = h => {
+    const mips = levels.map(l => ({ data: pick(l, h), width: l.length / 8, height: 1 }));
+    const tex = new THREE.DataTexture(mips[0].data, p.n, 1, THREE.RGBAFormat, THREE.HalfFloatType);
+    tex.mipmaps = mips;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = false;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate = true;
+    return tex;
+  };
+  ringU.uTauA.value = mk(0); ringU.uTauB.value = mk(1); ringU.uR0.value = p.r0; ringU.uR1.value = p.r1;
   // 고리 경계 밖(단면 양 끝의 잡음 수준 τ)은 그리지 않는다. XY → 로컬 XZ(법선 +Y = 북극)
   ringMesh.geometry = new THREE.RingGeometry(RING_EDGES.cIn, RING_EDGES.aOut, 720, 1).rotateX(-Math.PI / 2);
   ringMesh.visible = true;

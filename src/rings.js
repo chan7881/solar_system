@@ -38,13 +38,19 @@ const MU_MIN = 1e-3;
 //   뒷면(투과광):   F = 2μ0/(μ−μ0) · (e^{−τ/μ} − e^{−τ/μ0})   (μ=μ0이면 극한 2τ/μ · e^{−τ/μ})
 // 얇은 고리(τ≪1)는 두 면 모두 2τ/μ로 같고, 두꺼운 B고리는 뒷면에서 어둡다.
 export function ringLight(tau, mu, mu0, sameSide) {
+  return ringLight3(tau, tau, tau, mu, mu0, sameSide);
+}
+
+// ringLight를 빛길마다 다른 τ로 — 한 화소에 고리띠·틈이 섞이면 e^{−τ/μ}의 평균이 빛길 기울기마다 달라서
+// (ringSlantTau) 보는 길 tauV(1/μ), 햇빛 길 tauS(1/μ0), 왕복 tauH(1/μ + 1/μ0)를 따로 받는다. 셋이 같으면 ringLight
+export function ringLight3(tauV, tauS, tauH, mu, mu0, sameSide) {
   mu = Math.max(MU_MIN, Math.abs(mu));
   mu0 = Math.max(MU_MIN, Math.abs(mu0));
-  const T = Math.exp(-tau / mu);
+  const T = Math.exp(-tauV / mu);
   let F;
-  if (sameSide) F = 2 * mu0 / (mu + mu0) * (1 - Math.exp(-tau * (1 / mu + 1 / mu0)));
-  else if (Math.abs(mu - mu0) < 1e-4) F = 2 * tau / mu * T;
-  else F = 2 * mu0 / (mu - mu0) * (T - Math.exp(-tau / mu0));
+  if (sameSide) F = 2 * mu0 / (mu + mu0) * (1 - Math.exp(-tauH * (1 / mu + 1 / mu0)));
+  else if (Math.abs(mu - mu0) < 1e-4) F = 2 * tauV / mu * T;
+  else F = 2 * mu0 / (mu - mu0) * (T - Math.exp(-tauS / mu0));
   return { T, F };
 }
 
@@ -84,7 +90,8 @@ export function ringView(tau, v, s, n = [0, 1, 0]) {
   return ringLight(tau, vn, sn, vn * sn > 0);
 }
 
-// 밉맵 단계 — 이웃 두 칸을 투과율 exp(−τ)로 평균해 반씩 줄인다(마지막은 1칸). 0단계는 원래 단면
+// 밉맵 단계(빛길 하나) — 이웃 두 칸을 투과율 exp(−τ)로 평균해 반씩 줄인다(하우메아처럼 τ가 고른 고리와 테스트용).
+// 토성 고리는 ringSlantLevels — 이 평균은 정면 빛(μ=1)에서만 맞다(마지막은 1칸). 0단계는 원래 단면
 export function ringMipLevels(tau) {
   const out = [Float32Array.from(tau)];
   while (out.at(-1).length > 1) {
@@ -96,4 +103,41 @@ export function ringMipLevels(tau) {
     out.push(b);
   }
   return out;
+}
+
+// 고리는 판이 아니라 얼음 알갱이 무리라서 한 화소(밉맵 한 칸) 안에도 촘촘한 고리띠와 틈이 섞인다.
+// 그 칸을 비스듬히(μ) 지나는 빛의 몫은 칸 안 e^{−τ/μ}의 평균인데, 이것을 τ 하나로 나타내면 μ마다 값이 다르다:
+//   τ_eff(μ) = −μ · ln(평균 e^{−τ/μ})   (μ→0이면 칸 안 가장 옅은 곳의 τ로 간다 — 틈새로 빛이 샌다)
+// 정면(μ=1)으로 평균한 τ 하나를 쓰면 해가 낮을 때 틈이 메워져 그림자가 꽉 찬 판처럼 검어진다.
+// 그래서 RING_SLANT_MU 여덟 기울기의 τ_eff를 따로 줄여 두고(RGBA 두 장), 그 사이는 ln(평균 투과율)을 1/μ에 대해 직선으로 잇는다.
+export const RING_SLANT_MU = [1, 0.4, 0.16, 0.064, 0.0256, 0.01, 0.004, 0.001];
+
+// 밉맵 단계마다 칸 × 8기울기의 τ_eff(Float32Array, 칸 k의 기울기 j는 [8k + j]). 0단계는 모든 기울기가 원래 τ.
+// 평균 투과율은 칸끼리 그대로 더해지므로 ln 영역에서 합친다(τ/μ가 수천이어도 0으로 떨어지지 않게)
+export function ringSlantLevels(tau) {
+  const M = RING_SLANT_MU.length, S = RING_SLANT_MU.map(m => 1 / m);
+  let K = new Float64Array(tau.length * M); // ln(평균 투과율)
+  for (let k = 0; k < tau.length; k++) for (let j = 0; j < M; j++) K[k * M + j] = -tau[k] * S[j];
+  const toTau = K => Float32Array.from(K, (v, i) => -v / S[i % M]);
+  const out = [toTau(K)];
+  while (K.length > M) {
+    const n = K.length / M, m = Math.ceil(n / 2), N = new Float64Array(m * M);
+    for (let k = 0; k < m; k++) for (let j = 0; j < M; j++) {
+      const a = K[2 * k * M + j], b = 2 * k + 1 < n ? K[(2 * k + 1) * M + j] : a, hi = Math.max(a, b);
+      N[k * M + j] = hi + Math.log((Math.exp(a - hi) + Math.exp(b - hi)) / 2);
+    }
+    K = N; out.push(toTau(K));
+  }
+  return out;
+}
+
+// 한 칸의 τ_eff 여덟 개(t)에서 기울기 mu의 τ_eff — ln(평균 투과율) = −τ_eff/μ를 1/μ에 대해 직선 보간(셰이더 ringSlantTau와 같은 식)
+export function ringSlantTau(t, mu) {
+  const S = RING_SLANT_MU.map(m => 1 / m);
+  const s = 1 / Math.min(1, Math.max(MU_MIN, Math.abs(mu)));
+  let j = 0;
+  while (j < S.length - 2 && s > S[j + 1]) j++;
+  const f = (s - S[j]) / (S[j + 1] - S[j]);
+  const K = -t[j] * S[j] * (1 - f) - t[j + 1] * S[j + 1] * f;
+  return -K / s;
 }

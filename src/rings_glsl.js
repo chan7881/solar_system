@@ -5,19 +5,23 @@
 // uv = (r − r0)/(r1 − r0)를 LinearFilter로 읽으면 rings.js ringTau의 칸 보간(n·x − 0.5)과 같다.
 // 좌표는 토성 로컬(km): 고리면 법선 = +Y.
 
-import { RING_EDGES, RING_ALBEDO } from './rings.js';
+import { RING_EDGES, RING_ALBEDO, RING_SLANT_MU } from './rings.js';
 
-// 고리 한 점의 비침 T와 밝기 F(rings.js ringLight) — vec2(T, F)
+// 고리 한 점의 비침 T와 밝기 F(rings.js ringLight·ringLight3) — vec2(T, F)
 export const RING_LIGHT_GLSL = /* glsl */`
-  vec2 ringLight(float tau, float mu, float mu0, bool sameSide) {
+  vec2 ringLight3(float tauV, float tauS, float tauH, float mu, float mu0, bool sameSide) {
     mu = max(1e-3, abs(mu));
     mu0 = max(1e-3, abs(mu0));
-    float T = exp(-tau / mu);
+    float T = exp(-tauV / mu);
     float F;
-    if (sameSide) F = 2.0 * mu0 / (mu + mu0) * (1.0 - exp(-tau * (1.0 / mu + 1.0 / mu0)));
-    else if (abs(mu - mu0) < 1e-4) F = 2.0 * tau / mu * T;
-    else F = 2.0 * mu0 / (mu - mu0) * (T - exp(-tau / mu0));
+    if (sameSide) F = 2.0 * mu0 / (mu + mu0) * (1.0 - exp(-tauH * (1.0 / mu + 1.0 / mu0)));
+    else if (abs(mu - mu0) < 1e-4) F = 2.0 * tauV / mu * T;
+    else F = 2.0 * mu0 / (mu - mu0) * (T - exp(-tauS / mu0));
     return vec2(T, F);
+  }
+
+  vec2 ringLight(float tau, float mu, float mu0, bool sameSide) {
+    return ringLight3(tau, tau, tau, mu, mu0, sameSide);
   }
 
   // 보는 방향 v·해 방향 s로 본 고리 한 점(rings.js ringView, 법선 +Y)
@@ -62,3 +66,28 @@ export function ringAlbedoGLSL(toLinear) {
          : r < ${e('aIn')} ? vec4(${v(2)}) : vec4(${v(3)});
   }`;
 }
+
+// 기울기별 τ_eff(rings.js ringSlantLevels — 텍스처 두 장의 RGBA = 기울기 8개)에서 기울기 mu의 τ_eff(rings.js ringSlantTau)와
+// (이름은 다른 함수와 겹치지 않게 — glslToJs는 벡터 이름을 문자열 전체에서 기억한다) 그것으로 본 고리 한 점(보는 길·햇빛 길·왕복 길을 따로). 판처럼 검어지지 않게 — rings.js RING_SLANT_MU 설명
+const S = RING_SLANT_MU.map(m => (1 / m).toFixed(4));
+const ch = ['ta.x', 'ta.y', 'ta.z', 'ta.w', 'tb.x', 'tb.y', 'tb.z', 'tb.w'];
+export const RING_SLANT_GLSL = /* glsl */`
+  float slantSeg(float t0, float t1, float s0, float s1, float w) {
+    float f = (w - s0) / (s1 - s0);
+    return (t0 * s0 * (1.0 - f) + t1 * s1 * f) / w;
+  }
+
+  float ringSlantTau(vec4 ta, vec4 tb, float mu) {
+    float w = 1.0 / min(1.0, max(1e-3, abs(mu)));
+${S.slice(1, -1).map((_, j) => `    if (w <= ${S[j + 1]}) return slantSeg(${ch[j]}, ${ch[j + 1]}, ${S[j]}, ${S[j + 1]}, w);`).join(String.fromCharCode(10))}
+    return slantSeg(${ch[6]}, ${ch[7]}, ${S[6]}, ${S[7]}, w);
+  }
+
+  vec2 ringViewSlant(vec4 ta, vec4 tb, vec3 v, vec3 s) {
+    float mu = max(1e-3, abs(v.y));
+    float mu0 = max(1e-3, abs(s.y));
+    float tauV = ringSlantTau(ta, tb, mu);
+    float tauS = ringSlantTau(ta, tb, mu0);
+    float tauH = ringSlantTau(ta, tb, 1.0 / (1.0 / mu + 1.0 / mu0));
+    return ringLight3(tauV, tauS, tauH, v.y, s.y, v.y * s.y > 0.0);
+  }`;

@@ -2,19 +2,20 @@
 // GLSL 함수를 문자열 그대로 JS로 옮겨(타입 지우기·vec 생성자·.x/.y/.z) 같은 입력으로 비교한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, ringAlbedoGLSL } from '../src/rings_glsl.js';
+import { readFileSync } from 'node:fs';
+import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, RING_SLANT_GLSL, ringAlbedoGLSL } from '../src/rings_glsl.js';
 import { glslToJs } from './glsl_to_js.mjs';
-import { RING_EDGES, ringLight, inPlanetShadow, ringShadowRadius, ringAlbedo, ringShadowT, ringView } from '../src/rings.js';
+import { RING_EDGES, ringLight, inPlanetShadow, ringShadowRadius, ringAlbedo, ringShadowT, ringView, ringLight3, ringSlantTau, ringSlantLevels, RING_SLANT_MU } from '../src/rings.js';
 
-const G = glslToJs(RING_LIGHT_GLSL + RING_SHADOW_GLSL + ringAlbedoGLSL(t => t));
+const G = glslToJs(RING_LIGHT_GLSL + RING_SHADOW_GLSL + RING_SLANT_GLSL + ringAlbedoGLSL(t => t));
 const RE = 60268, RP = 54364;
 // 같은 씨앗의 의사 난수 — 실패를 다시 낼 수 있게
 let seed = 12345;
 const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const close = (a, b, rel = 1e-9) => Math.abs(a - b) <= rel * Math.max(1, Math.abs(a), Math.abs(b));
 
-test('옮기기: GLSL 함수 6개가 다 나온다', () => {
-  for (const k of ['ringLight', 'ringView', 'inPlanetShadow', 'ringShadowRadius', 'ringShadowT', 'ringAlbedo']) assert.equal(typeof G[k], 'function', k);
+test('옮기기: GLSL 함수 9개가 다 나온다', () => {
+  for (const k of ['ringLight', 'ringLight3', 'ringSlantTau', 'ringViewSlant', 'ringView', 'inPlanetShadow', 'ringShadowRadius', 'ringShadowT', 'ringAlbedo']) assert.equal(typeof G[k], 'function', k);
 });
 
 test('ringLight: 셰이더 식이 rings.js와 같다 — 앞·뒷면, 얇은·두꺼운 고리, 비스듬한 빛, μ≈μ0', () => {
@@ -105,4 +106,25 @@ test('옮기기 도구: 대조할 수 없는 GLSL은 조용히 넘기지 않고 
   assert.throws(() => glslToJs('float f(vec3 p) { return length(p * 2.0); }'), /벡터 사칙연산/);
   assert.throws(() => glslToJs('float f(float r) { return texture2D(t, vec2(r, 0.5)).r; }'), /문법/);
   assert.equal(glslToJs('float f(vec3 p) { return -p.y * 2.0 + p.x; }').f([3, 4, 5]), -5);
+});
+
+test('ringLight3·ringSlantTau·ringViewSlant: 셰이더 식이 rings.js와 같다 — 기울기 칸 경계·끝·범위 밖 μ 포함', () => {
+  const L = ringSlantLevels(JSON.parse(readFileSync(new URL('../textures/saturn_rings.json', import.meta.url), 'utf8')).tau);
+  const mus = [...RING_SLANT_MU, ...RING_SLANT_MU.map(m => m * 1.3), 1e-4, -0.2, 0.0005];
+  for (let i = 0; i < 2000; i++) {
+    const lv = i % 10, row = L[lv], k = Math.floor(rnd() * row.length / 8), t = Array.from(row.slice(8 * k, 8 * k + 8));
+    const a = t.slice(0, 4), b = t.slice(4);
+    const mu = i < mus.length ? mus[i] : (rnd() * 2 - 1) ** 3;
+    assert.ok(close(G.ringSlantTau(a, b, mu), ringSlantTau(t, mu), 1e-9), `lv${lv} k${k} μ${mu}`);
+    const v = [rnd() - 0.5, (rnd() - 0.5) ** 3, rnd() - 0.5], s = [rnd() - 0.5, (rnd() - 0.5) * 0.9, rnd() - 0.5];
+    const n = u => { const l = Math.hypot(...u); return u.map(x => x / l); };
+    const V = n(v), S = n(s);
+    const mV = Math.max(1e-3, Math.abs(V[1])), mS = Math.max(1e-3, Math.abs(S[1]));
+    const js = ringLight3(ringSlantTau(t, mV), ringSlantTau(t, mS), ringSlantTau(t, 1 / (1 / mV + 1 / mS)), V[1], S[1], V[1] * S[1] > 0);
+    const [gt, gf] = G.ringViewSlant(a, b, V, S);
+    assert.ok(close(js.T, gt) && close(js.F, gf, 1e-7), `lv${lv} JS ${js.T},${js.F} / GLSL ${gt},${gf}`);
+  }
+  // τ가 셋 다 같으면 ringLight 그대로
+  for (const [tau, mu, mu0, same] of [[0.3, 0.2, 0.5, true], [2, 0.4, -0.1, false], [1, 0.3, 0.3, false]])
+    assert.deepEqual(ringLight3(tau, tau, tau, mu, mu0, same), ringLight(tau, mu, mu0, same));
 });
