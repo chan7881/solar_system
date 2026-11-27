@@ -7,7 +7,7 @@ import { NIGHT_GLSL, RIM_GLSL } from './atmosphere.js';
 import { RING_LIGHT_GLSL, RING_SHADOW_GLSL, RING_SLANT_GLSL, ringAlbedoGLSL } from './rings_glsl.js';
 import { MOONS, systemOffsets, moonTrailCache } from './moons.js';
 import { RATES, REALTIME, clampRate, rateText, advanceMs, navGroups, systemOf, LAYERS, defaultLayers, bodyShown, GROUP_LAYER } from './nav.js';
-import { SHAPED, SHAPE_REACH, parseShape } from './shapes.js';
+import { SHAPED, SHAPE_REACH, parseShape, shapeUV } from './shapes.js';
 import { production, ionLength, comaRadius, ionDirection, dustTail, dustSamples, stateFrom } from './comets.js';
 import { distanceKm, distanceText, diameterOf, fmtDiameter, ratioText, defaultPair, compareLayout, visibleMid, extremeText, fmtKm, fmtAU, fmtDay } from './tools.js';
 import { toScreen as flareScreen, ghosts, GHOSTS, BLOOM, bloomScales, coreSigma, veilScale, visibleFraction, flareGain, bloomGain } from './flare.js';
@@ -60,7 +60,8 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.04));
 
 // 표면 지도(단순 원통 도법, 가운데 = 경도 0°, 동경+) — 출처는 textures/출처.md. 없는 천체는 단색.
 const TEXTURED = new Set(['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon', 'pluto', 'charon', 'io', 'europa', 'ganymede', 'callisto',
-  'mimas', 'enceladus', 'tethys', 'dione', 'rhea', 'iapetus', 'neptune', 'ceres', 'triton', 'miranda', 'ariel', 'umbriel', 'titania', 'oberon']);
+  'mimas', 'enceladus', 'tethys', 'dione', 'rhea', 'iapetus', 'neptune', 'ceres', 'triton', 'miranda', 'ariel', 'umbriel', 'titania', 'oberon',
+  'hyperion']); // 히페리온은 모양 모형에 입힌다(shapeUV — 가운데에서 본 경도·위도)
 const texLoader = new THREE.TextureLoader();
 // 지도를 받아 질감으로 돌려준다(Promise). 받은 뒤에 재질에 넣는 것은 부르는 쪽이 한다.
 function loadTexture(url) {
@@ -77,7 +78,10 @@ function setMap(mat, tex, color) {
 }
 function loadSurface(key, mat) {
   const url = `textures/${key}_2k.jpg`;
-  loadTexture(url).then(tex => setMap(mat, tex), () => console.warn(`표면 지도를 못 불러옴: ${url} — 단색으로 둔다`));
+  loadTexture(url).then(tex => {
+    if (SHAPED.has(key)) tex.wrapS = THREE.RepeatWrapping; // 모양 모형은 이음매 면의 u가 1을 넘는다(shapeUV)
+    setMap(mat, tex);
+  }, () => console.warn(`표면 지도를 못 불러옴: ${url} — 단색으로 둔다`));
 }
 
 // 회전 타원체 몸체. 구의 꼭짓점 방향(지도의 v = 행성 중심 위도)을 그대로 두고 그 방향의 타원체 거리로 옮긴다 —
@@ -108,9 +112,11 @@ const HAS_ATMO = new Set([...Object.keys(SURFACE_UNDER), 'earth']);
 // 포보스·데이모스·히페리온·혜성 핵은 모양 모형(SHAPED, textures/<이름>_shape.bin)을 받으면 구를 그것으로 바꾼다 — 못 받으면 구로 둔다
 function loadShape(b) {
   fetch(`textures/${b.key}_shape.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => {
-    const { positions, index } = parseShape(buf);
+    const shape = parseShape(buf);
+    const { positions, index, uv } = TEXTURED.has(b.key) ? shapeUV(shape) : shape; // 지도가 있으면 지도 좌표를 붙인다
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    if (uv) geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
     geo.computeBoundingSphere();

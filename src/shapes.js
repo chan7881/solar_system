@@ -32,3 +32,34 @@ export function shapeVolume({ positions: p, index }) {
   }
   return v / 6;
 }
+
+// 지도 좌표(u, v) — 가운데에서 본 방향의 경도·위도(별 모양 모형이라 방향 하나에 겉면 점 하나, tools/make_shapes.py에서 확인).
+// 지도 약속은 다른 천체와 같다: u = 0.5 + 경도/360°(가운데 = 경도 0°, 동경+), v = 0.5 + 위도/180°(1 = 북 — three.js는 그림 위쪽이 v = 1).
+// 몸체 좌표 +X = 경도 0°, +Y = 북극, −Z = 동경 90°.
+// 경도 ±180° 이음매를 가로지르는 면은 서쪽(u < 0.5) 꼭짓점을 u + 1로 복제한다 — 질감은 RepeatWrapping으로 읽는다.
+export function shapeUV({ positions: p, index }) {
+  const n = p.length / 3;
+  const uv = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+    uv[i * 2] = 0.5 + Math.atan2(-z, x) / (2 * Math.PI);
+    uv[i * 2 + 1] = 0.5 + Math.asin(y / Math.hypot(x, y, z)) / Math.PI;
+  }
+  const pos = Array.from(p), tex = Array.from(uv), idx = Array.from(index), dup = new Map();
+  for (let f = 0; f < idx.length; f += 3) {
+    const us = [0, 1, 2].map(k => uv[idx[f + k] * 2]);
+    if (Math.max(...us) - Math.min(...us) <= 0.5) continue;
+    for (let k = 0; k < 3; k++) {
+      const v = idx[f + k];
+      if (uv[v * 2] >= 0.5) continue;
+      if (!dup.has(v)) {
+        dup.set(v, pos.length / 3);
+        pos.push(p[v * 3], p[v * 3 + 1], p[v * 3 + 2]);
+        tex.push(uv[v * 2] + 1, uv[v * 2 + 1]);
+      }
+      idx[f + k] = dup.get(v);
+    }
+  }
+  const N = pos.length / 3;
+  return { positions: new Float32Array(pos), uv: new Float32Array(tex), index: new (N < 65536 ? Uint16Array : Uint32Array)(idx) };
+}

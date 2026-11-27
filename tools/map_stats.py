@@ -14,7 +14,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 KEYS = ['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'moon', 'pluto', 'charon', 'io', 'europa', 'ganymede', 'callisto',
         'mimas', 'enceladus', 'tethys', 'dione', 'rhea', 'iapetus', 'neptune', 'ceres', 'triton', 'miranda', 'ariel', 'umbriel',
-        'titania', 'oberon']  # main.js TEXTURED와 같은 목록(tests/albedo.test.mjs가 대조)
+        'titania', 'oberon', 'hyperion']  # main.js TEXTURED와 같은 목록(tests/albedo.test.mjs가 대조)
 
 
 def linear(a):
