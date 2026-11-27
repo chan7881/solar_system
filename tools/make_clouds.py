@@ -4,6 +4,8 @@
 눈·얼음 가르기는 VIIRS_NOAA20_CorrectedReflectance_BandsM11-I2-I1(눈·얼음 구름은 하늘색). MODIS는 폭이 좁아 궤도 가장자리 줄무늬가 커서 쓰지 않았다.
 (VIIRS SNPP는 이 날짜들에 GIBS가 영상을 주지 않았다 — 3KB짜리 오류 그림이 온다.) 하루치 영상의 틈은 NOAA21로 메우고 겨울 반구 극지는 극야로 비어 있다.
 그래서 기준 날짜(BASE)로 만들고, 북극 쪽은 여름 날짜(NORTH)로 위도 45~60° 사이에서 서서히 바꿔 채운다.
+끊김 처리(2026-11-27): 햇빛 반사 띠는 NOAA21로 바꾸고, 경도 180° 이음매는 다음 날 영상으로 서서히 넘기고,
+위도 62~70° 위는 이틀 × 두 위성 평균(밝기·눈얼음 거르기 모두) — 자세한 까닭은 day_min·seamless.
 원본 영상은 원본/clouds/ 에 받아 둔다(git 밖).
 
 구름 뽑기: 구름은 흰색(세 채널이 비슷하게 높음), 땅·바다는 어느 한 채널이 낮다 → 관측의 min(R,G,B) 가 구름 몫.
@@ -17,7 +19,8 @@ import sys
 import urllib.request
 from pathlib import Path
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
+from scipy.ndimage import gaussian_filter
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / '원본' / 'clouds'
@@ -48,39 +51,88 @@ def valid(a: np.ndarray) -> np.ndarray:
     return (a[..., 3] > 0.5) & (a[..., :3].max(axis=-1) > 0.02)
 
 
-def merged(date: str):
-    """NOAA20 우선, 틈은 NOAA21로. 반환: (rgb, 유효)"""
-    t, q = fetch('NOAA20', date), fetch('NOAA21', date)
-    vt, vq = valid(t), valid(q)
-    rgb = np.where(vt[..., None], t[..., :3], q[..., :3])
-    return rgb, vt | vq
-
-
 def lin(v):
     return np.where(v <= 0.04045, v / 12.92, ((v + 0.055) / 1.055) ** 2.4)
 
 
+def blur(v: np.ndarray, ok: np.ndarray, sigma: float) -> np.ndarray:
+    """빈칸을 빼고 흐리게(경도 방향은 이어 붙여서)"""
+    num = gaussian_filter(np.where(ok, v, 0), sigma, mode=('nearest', 'wrap'))
+    den = gaussian_filter(ok.astype(np.float32), sigma, mode=('nearest', 'wrap'))
+    return num / np.maximum(den, 1e-3)
+
+
+def decl(date: str) -> float:
+    doy = np.datetime64(date).astype('datetime64[D]') - np.datetime64(date[:4] + '-01-01')
+    return -23.44 * np.cos(2 * np.pi * (doy.astype(int) + 10) / 365)
+
+
+LAT = 90 - (np.arange(H) + 0.5) / H * 180
+LON = -180 + (np.arange(W) + 0.5) / W * 360
+
+
+def day_min(date: str):
+    """하루치 min(R,G,B)(선형)와 유효 칸. NOAA20 우선, 틈은 NOAA21.
+    ① 햇빛 반사: 두 위성의 반사 띠는 반 칸 어긋나 있다 → 태양 직하 위도 ±25° 안에서 흐리게 뭉갠 밝기가
+       NOAA21보다 확연히 밝은 곳(NOAA20의 반사 띠)은 NOAA21로 바꾼다(50분 차라 구름은 거의 같다).
+    반환: (min, 유효, 합, 개수) — 합·개수는 극지 평균용"""
+    t, q = fetch('NOAA20', date), fetch('NOAA21', date)
+    vt, vq = valid(t), valid(q)
+    mt, mq = lin(t[..., :3].min(axis=-1)), lin(q[..., :3].min(axis=-1))
+    both = vt & vq
+    g = blur(mt, vt, 12) - blur(mq, vq, 12)
+    band = np.clip((25 - np.abs(LAT - decl(date))) / 5, 0, 1)[:, None]
+    wq = np.clip((g - 0.02) / 0.04, 0, 1) * band
+    m = np.where(both, mt * (1 - wq) + mq * wq, np.where(vt, mt, mq))
+    return m, vt | vq, np.where(vt, mt, 0) + np.where(vq, mq, 0), vt.astype(np.float32) + vq
+
+
+def cyan(date: str, sat='NOAA20'):
+    """눈·얼음 하늘색 정도와 유효 칸"""
+    raw = fetch(sat, date, 'BandsM11-I2-I1', 2048, 1024)
+    b = np.asarray(Image.fromarray((raw * 255).astype(np.uint8)).resize((W, H), Image.BILINEAR), dtype=np.float32) / 255
+    return np.clip((b[..., 1] - b[..., 0] - 0.12) / 0.2, 0, 1), valid(b)
+
+
+def seamless(date: str):
+    """② 경도 180° 이음매: 하루 합성은 동쪽 끝(+180°)이 서쪽 끝(−180°)보다 24시간 이르다.
+    다음 날 영상의 동쪽 끝이 그날 서쪽 끝과 같은 시각이므로 경도 165°부터 180°까지 다음 날로 서서히 바꾼다.
+    반환: (min 선형, 유효, 눈·얼음 하늘색 정도)"""
+    nxt = str(np.datetime64(date) + 1)
+    m, ok, s, n = day_min(date)
+    m1, ok1, s1, n1 = day_min(nxt)
+    (c, _), (c1, _) = cyan(date), cyan(nxt)
+    w = np.clip((LON - 165) / 15, 0, 1)[None, :] * np.ones((H, 1))
+    w = np.where(ok1, np.where(ok, w, 1), 0)
+    m = m * (1 - w) + m1 * w
+    # ③ 위도 62~70° 위는 이틀 × 두 위성 평균 — 극지는 타일마다 다른 시각의 영상이 붙어 네모난 조각이 진다
+    n = n + n1
+    wp = np.where(n > 0, np.clip((np.abs(LAT) - 62) / 8, 0, 1)[:, None], 0)
+    m = m * (1 - wp) + (s + s1) / np.maximum(n, 1) * wp
+    c = c * (1 - w) + c1 * w
+    cs = [cyan(d, sat) for d in (date, nxt) for sat in ('NOAA20', 'NOAA21')]   # 눈·얼음 거르기 영상도 같은 까닭으로 평균
+    cn = sum(v.astype(np.float32) for _, v in cs)
+    cavg = sum(np.where(v, x, 0) for x, v in cs) / np.maximum(cn, 1)
+    wc = np.where(cn > 0, np.clip((np.abs(LAT) - 62) / 8, 0, 1)[:, None], 0)
+    return m, ok | ok1, c * (1 - wc) + cavg * wc
+
+
 def cloud_alpha() -> np.ndarray:
     """선형 구름 투명도(0~1)"""
-    rgb, ok = merged(BASE)
-    rgbN, okN = merged(NORTH)
-    lat = 90 - (np.arange(H) + 0.5) / H * 180
+    m, ok, cy = seamless(BASE)
+    mN, okN, cyN = seamless(NORTH)
+    lat = LAT
     wN = np.clip((lat - 45) / 15, 0, 1)[:, None]           # 위도 45° 이하 0 → 60° 이상 1
     wN = np.where(okN, wN, 0)
     wN = np.where(~ok, np.where(okN, 1, 0), wN)             # 기준에 없으면 여름 영상으로
-    rgb = rgb * (1 - wN[..., None]) + rgbN * wN[..., None]
+    m = m * (1 - wN) + mN * wN
     ok = ok | okN
-    m = rgb.min(axis=-1)
     surf = np.asarray(Image.open(SURF).convert('RGB').resize((W, H), Image.LANCZOS), dtype=np.float32) / 255
     mb = surf.min(axis=-1)
     th = lin(mb * 0.9 + 0.08)  # 바탕 문턱(sRGB 값으로 정한 것을 선형으로)
-    a = np.clip((lin(m) - th) / (1 - th), 0, 1)
+    a = np.clip((m - th) / (1 - th), 0, 1)
     # 눈·얼음: 7-2-1 합성에서 하늘색(G − R 큼). 위도 45° 위·−55° 아래에서만 걸러 낸다(열대 얼음 구름은 남긴다)
-    def cyan(date):
-        b = np.asarray(Image.fromarray((fetch('NOAA20', date, 'BandsM11-I2-I1', 2048, 1024)[..., :3] * 255).astype(np.uint8))
-                       .resize((W, H), Image.BILINEAR), dtype=np.float32) / 255
-        return np.clip((b[..., 1] - b[..., 0] - 0.12) / 0.2, 0, 1)
-    cy = cyan(BASE) * (1 - wN) + cyan(NORTH) * wN
+    cy = cy * (1 - wN) + cyN * wN
     zone = np.clip((np.abs(lat) - 45) / 10, 0, 1)[:, None]
     zone = np.where(lat[:, None] < 0, np.clip((-lat[:, None] - 55) / 10, 0, 1), zone)
     a = a * (1 - cy * zone)
