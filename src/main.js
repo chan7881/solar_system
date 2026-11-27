@@ -1208,7 +1208,7 @@ legend.innerHTML = [...GROUP_NAMES.map((n, i) => [n, GROUP_COLORS[i]]), ['오르
   for (const k of ['belt', 'kuiper', 'oort']) lyList.appendChild(layerItem(k));
   lyList.append(layerItem('groupColors', true), legend); // 무리 전체(소행성대~오르트 구름)에 걸리는 색 구분
   sec('표시');
-  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights', 'shadows', 'sunFlare']) lyList.appendChild(layerItem(k));
+  for (const k of ['trails', 'orbits', 'labels', 'icons', 'constellations', 'nightLights', 'shadows', 'ringEdges', 'sunFlare']) lyList.appendChild(layerItem(k));
 }
 function setLayers(patch) {
   Object.assign(state.layers, patch);
