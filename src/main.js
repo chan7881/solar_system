@@ -17,7 +17,7 @@ import { MAP_STATS } from './map_stats.js';
 import { LIMB_GLSL } from './sun.js';
 import { PHASE_GLSL } from './phase.js';
 import { RING_SETS, ringEdgeRadii, buildProfile, dustMipLevels, adamsArcLon, localPhiOfLon, ADAMS_ARC_GLSL, ADAMS_ARC_FD, NEPTUNE_RINGS } from './jovian_rings.js';
-import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText } from './orbit.js';
+import { orbitOf, orbitMarks, orbitView, orbitFit, ellipsePoint, apsisNames, orbitCenter, orbitPeriodYears, periodText, pairOrbits, orbitsFit } from './orbit.js';
 import { HAUMEA_POLE, HAUMEA_RING } from './dwarfs.js';
 import { DWARFS, COMETS, SMALL_BODIES, isSmallBody, smallBodyHelio, smallBodyTrail, parsePoints, pointPositions, oortCloud, OORT, groupAnchors } from './smallbodies.js';
 
@@ -1331,7 +1331,7 @@ for (const [tool, sels] of Object.entries(pickers)) {
     sel.addEventListener('change', () => {
       state.pair[tool][i] = sel.value;
       if (tool === 'size') buildCompare();
-      else lastDist = '';
+      else { lastDist = ''; goDist(); }
     });
   });
 }
@@ -1349,6 +1349,7 @@ function setTool(t) {
   } else if (t) {
     state.pair[t] = defaultPair(state.focus);
     pickers[t].forEach((sel, i) => { sel.value = state.pair[t][i]; });
+    if (t === 'dist') { distEl.hidden = false; goDist(); } // 창 높이를 재려면 먼저 보여야 한다
   }
   orbitEl.hidden = t !== 'orbit';
   distEl.hidden = t !== 'dist';
@@ -1484,9 +1485,9 @@ function orbitCard(o, jd) {
   orbTags.peri.innerHTML = `${pk}<span>${fmtKm(o.peri)}</span>`;
   orbTags.apo.innerHTML = `${ak}<span>${fmtKm(o.apo)}</span>`;
 }
-// 궤도를 둘 빈 곳(px) — 카드 옆에 넉넉한 자리가 있으면(넓은 화면) 옆, 아니면(폰) 카드 아래
-function orbitBox(w) {
-  const top = orbitEl.offsetTop, bottom = top + orbitEl.offsetHeight, right = orbitEl.offsetLeft + orbitEl.offsetWidth;
+// 궤도를 둘 빈 곳(px) — 카드 옆에 넉넉한 자리가 있으면(넓은 화면) 옆, 아니면(폰) 카드 아래. 거리 재기는 그 창(card) 기준
+function orbitBox(w, card = orbitEl) {
+  const top = card.offsetTop, bottom = top + card.offsetHeight, right = card.offsetLeft + card.offsetWidth;
   return w - right >= 420 ? { l: right + 8, t: top, r: w - 8, b: viewH - 8 } : { l: 8, t: bottom + 8, r: w - 8, b: viewH - 8 };
 }
 const toScene = a => new THREE.Vector3(...eclipticToScene(a));
@@ -1500,6 +1501,15 @@ function goOrbit() {
   // 타원 중심이 빈 곳 가운데에 보이도록 바라보는 점을 옮긴다(궤도면이 시선에 수직이라 화소 = f·길이/d)
   const target = toScene(m.center).addScaledVector(right, -fit.dx * fit.d / f).addScaledVector(up, fit.dy * fit.d / f);
   flyTo(o.center, { dir: toScene(v.dir), up, target, dist: () => fit.d });
+}
+// 거리 재기 카메라 — 두 천체의 궤도를 함께 내려다본다(src/orbit.js pairOrbits·orbitsFit).
+// 태양·행성·다른 행성의 위성이 섞이면 더 바깥 행성 궤도로, 모행성-제 위성이면 위성 궤도로. 같은 천체면 그대로 둔다
+function goDist() {
+  const p = pairOrbits(...state.pair.dist, julianDateTT(state.simMs));
+  if (!p) return;
+  const w = finalStageW(), f = pxPerRad();
+  const q = orbitsFit(p.orbits, p.main, orbitBox(w, distEl), w / 2, viewH / 2, f);
+  flyTo(p.center, { dir: toScene(q.dir), up: toScene(q.up), target: toScene(q.target), dist: () => q.d });
 }
 const orbV = new THREE.Vector3();
 const orbCache = { jd: NaN, key: null, o: null, m: null };

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { orbitOf, basisFromAngles, elementsFromState, apsisNames, orbitCenter, orbitMarks, orbitView, orbitFit, ellipsePoint, orbitPeriodYears, periodText } from '../src/orbit.js';
+import { orbitOf, basisFromAngles, elementsFromState, apsisNames, orbitCenter, orbitMarks, orbitView, orbitFit, ellipsePoint, orbitPeriodYears, periodText, centerChain, pairOrbits, orbitsFit } from '../src/orbit.js';
 import { julianDateTT } from '../src/ephemeris.js';
 
 const H = JSON.parse(fs.readFileSync(new URL('./horizons_orbit.json', import.meta.url), 'utf8'));
@@ -163,4 +163,80 @@ test('주기 글자: 1년 이상 년 · 1년 미만 일 · 1일 미만 시간, �
   assert.equal(periodText(0.9999999 / 365.25), '1.0000일'); // 반올림하면 24시간 → 일
   assert.equal(periodText(0.99999999), '1.0000년'); // 반올림하면 365.25일 → 년
   assert.equal(periodText(0.31891 / 365.25), '7.6538시간');
+});
+
+// ---------- 거리 재기 카메라 ----------
+test('거리 재기: 두 천체의 궤도를 함께 담을 중심과 바깥 궤도', () => {
+  const jd = julianDateTT(Date.UTC(2026, 10, 28));
+  assert.deepEqual(centerChain('moon'), ['moon', 'earth', 'sun']);
+  assert.deepEqual(centerChain('sun'), ['sun']);
+  const cases = [ // [A, B, 중심, 담는 궤도, 바깥(main)]
+    ['earth', 'moon', 'earth', ['moon'], 'moon'], // 모행성-제 위성: 위성 궤도
+    ['moon', 'earth', 'earth', ['moon'], 'moon'],
+    ['sun', 'moon', 'sun', ['earth'], 'earth'], // 태양-위성: 모행성 궤도
+    ['sun', 'earth', 'sun', ['earth'], 'earth'],
+    ['mars', 'jupiter', 'sun', ['mars', 'jupiter'], 'jupiter'], // 행성-행성: 바깥 행성
+    ['jupiter', 'mars', 'sun', ['jupiter', 'mars'], 'jupiter'],
+    ['io', 'europa', 'jupiter', ['io', 'europa'], 'europa'], // 같은 모행성의 위성끼리: 바깥 위성
+    ['io', 'titan', 'sun', ['jupiter', 'saturn'], 'saturn'], // 다른 모행성의 위성끼리: 바깥 모행성
+    ['earth', 'io', 'sun', ['earth', 'jupiter'], 'jupiter'],
+    ['pluto', 'charon', 'pluto', ['charon'], 'charon'],
+    ['halley', 'neptune', 'sun', ['halley', 'neptune'], 'halley'], // 원일점 35AU > 해왕성 30AU
+  ];
+  for (const [a, b, c, ks, main] of cases) {
+    const p = pairOrbits(a, b, jd);
+    assert.equal(p.center, c, `${a}-${b} 중심`);
+    assert.deepEqual(p.orbits.map(o => o.key), ks, `${a}-${b} 궤도`);
+    assert.equal(p.main.key, main, `${a}-${b} 바깥`);
+    for (const o of p.orbits) assert.equal(o.center, c);
+  }
+  assert.equal(pairOrbits('mars', 'mars', jd), null);
+});
+
+test('거리 재기: 궤도 하나면 궤도 보기와 같은 카메라', () => {
+  const jd = julianDateTT(Date.UTC(2026, 10, 28)), box = { l: 380, t: 60, r: 1500, b: 900 }, cx = 900, cy = 480, f = 1100;
+  for (const k of ['earth', 'moon', 'halley', 'titan']) {
+    const o = orbitOf(k, jd), v = orbitView(o), fit = orbitFit(o, box, cx, cy, f), m = orbitMarks(o);
+    const q = orbitsFit([o], o, box, cx, cy, f);
+    assert.ok(rel(q.d, fit.d) < 1e-4, `${k} d ${q.d} ${fit.d}`);
+    assert.deepEqual(q.dir, v.dir); assert.deepEqual(q.up, v.up);
+    // 궤도 보기의 바라보는 점: 타원 중심 − right·dx·d/f + up·dy·d/f
+    const t = [0, 1, 2].map(i => m.center[i] - v.right[i] * fit.dx * fit.d / f + v.up[i] * fit.dy * fit.d / f);
+    assert.ok(len(sub(q.target, t)) < 1e-4 * o.a, `${k} target`);
+  }
+});
+
+test('거리 재기: 두 궤도의 모든 점이 영역 안에, 한 변에는 닿는다(원근 포함)', () => {
+  const jd = julianDateTT(Date.UTC(2026, 10, 28)), box = { l: 8, t: 300, r: 400, b: 840 }, cx = 204, cy = 420, f = 800, pad = 28;
+  for (const [a, b] of [['halley', 'neptune'], ['swifttuttle', 'neptune'], ['io', 'titan'], ['earth', 'moon'], ['io', 'europa'], ['pluto', 'eris'], ['sun', 'halebopp']]) {
+    const p = pairOrbits(a, b, jd), q = orbitsFit(p.orbits, p.main, box, cx, cy, f, pad);
+    // 황도 북쪽 편에서 main 궤도면에 수직으로
+    assert.ok(q.dir[2] >= 0 && Math.abs(Math.abs(dot(q.dir, p.main.W)) - 1) < 1e-12, `${a}-${b} 방향`);
+    let edge = Infinity;
+    for (const o of p.orbits) for (let k = 0; k < 720; k++) {
+      const r = sub(ellipsePoint(o, (2 * Math.PI * k) / 720), q.target);
+      const z = dot(r, q.dir), sx = cx + (f * dot(r, q.right)) / (q.d - z), sy = cy - (f * dot(r, q.up)) / (q.d - z);
+      assert.ok(z < q.d, `${a}-${b} 카메라 뒤`);
+      const m = Math.min(sx - (box.l + pad), box.r - pad - sx, sy - (box.t + pad), box.b - pad - sy);
+      assert.ok(m > -0.5, `${a}-${b} ${o.key} 밖으로 ${-m}px`);
+      edge = Math.min(edge, m);
+    }
+    assert.ok(edge < 2, `${a}-${b} 여유가 남음 ${edge}px`);
+  }
+});
+
+test('거리 재기: 궤도면 밖으로 나온 가장자리 점은 원근만큼 더 물러난다(가상 궤도)', () => {
+  // main: xy 평면의 반지름 1 원 · 다른 궤도: y축으로 50° 기울인 반지름 1.3 원 — x 끝점이 카메라 쪽(z>0)에 있다
+  const c = Math.cos(50 * D), s = Math.sin(50 * D);
+  const main = { a: 1, e: 0, b: 1, P: [1, 0, 0], Q: [0, 1, 0], W: [0, 0, 1] };
+  const tilt = { a: 1.3, e: 0, b: 1.3, P: [-c, 0, s], Q: [0, -1, 0], W: [s, 0, c] };
+  const box = { l: 0, t: 0, r: 400, b: 1000 }, cx = 200, cy = 500, f = 800, pad = 0;
+  const q = orbitsFit([main, tilt], main, box, cx, cy, f, pad);
+  let worst = Infinity;
+  for (const o of [main, tilt]) for (let k = 0; k < 720; k++) {
+    const r = sub(ellipsePoint(o, (2 * Math.PI * k) / 720), q.target);
+    const z = dot(r, q.dir), sx = cx + (f * dot(r, q.right)) / (q.d - z);
+    worst = Math.min(worst, sx - box.l, box.r - sx);
+  }
+  assert.ok(worst > -0.5 && worst < 2, `가로 여유 ${worst}px`);
 });

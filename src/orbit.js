@@ -117,3 +117,41 @@ export function orbitFit(o, { l, t, r, b }, cx, cy, f, pad = 28) {
   const d = Math.max((o.a * f) / halfW, (o.b * f) / halfH);
   return { d, dx: (l + r) / 2 - cx, dy: (t + b) / 2 - cy };
 }
+
+// ---------- 거리 재기 카메라 ----------
+// 천체에서 태양까지 도는 중심을 따라 올라간 줄 — [천체, 그 중심, …, 'sun']
+export function centerChain(key) {
+  const c = [key];
+  while (c[c.length - 1] !== 'sun') c.push(orbitCenter(c[c.length - 1]));
+  return c;
+}
+// 두 천체를 함께 담을 궤도들 — 두 줄이 처음 만나는 중심 C와, C 둘레를 도는 대표(천체 자신 또는 그 천체가 딸린 행성)의 궤도.
+// 태양-위성·다른 행성의 위성끼리는 모행성 궤도로, 모행성-제 위성은 위성 궤도로 올라간다. main은 원점이 가장 먼(더 바깥) 궤도.
+// 같은 천체면 null
+export function pairOrbits(ka, kb, jd) {
+  if (ka === kb) return null;
+  const ca = centerChain(ka), cb = centerChain(kb);
+  const center = ca.find(k => cb.includes(k));
+  const reps = [ca, cb].map(c => c[c.indexOf(center) - 1]).filter(k => k);
+  const orbits = [...new Set(reps)].map(k => orbitOf(k, jd));
+  const main = orbits.reduce((p, q) => (q.apo > p.apo ? q : p));
+  return { center, orbits, main };
+}
+// 여러 궤도(같은 중심 기준)를 main 궤도의 궤도 보기 방향에서 화면 영역 {l, t, r, b}(px)에 담는 카메라.
+// 궤도면 밖의 점은 카메라 쪽으로 z만큼 나와 f·x/(d − z)로 커 보이므로 점마다 d ≥ f·|x|/반폭 + z를 지킨다(main 하나면 orbitFit과 같다).
+// 반환: dir·up·right(황도 단위 벡터), target(바라보는 점, 중심 기준 km), d(km)
+export function orbitsFit(orbits, main, { l, t, r, b }, cx, cy, f, pad = 28, n = 360) {
+  const v = orbitView(main);
+  const halfW = Math.max(20, (r - l) / 2 - pad), halfH = Math.max(20, (b - t) / 2 - pad);
+  const pts = orbits.flatMap(o => Array.from({ length: n }, (_, k) => ellipsePoint(o, (2 * Math.PI * k) / n)))
+    .map(p => [dot(p, v.right), dot(p, v.up), dot(p, v.dir)]);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const mx = (Math.min(...xs) + Math.max(...xs)) / 2, my = (Math.min(...ys) + Math.max(...ys)) / 2;
+  let d = 0;
+  for (const [x, y, z] of pts) d = Math.max(d, (f * Math.abs(x - mx)) / halfW + z, (f * Math.abs(y - my)) / halfH + z);
+  // 묶음 가운데가 영역 가운데에 보이도록 바라보는 점을 옮긴다(화면 중심에서 dx 오른쪽·dy 아래)
+  const dx = (l + r) / 2 - cx, dy = (t + b) / 2 - cy;
+  const sx = mx - (dx * d) / f, sy = my + (dy * d) / f;
+  const target = [0, 1, 2].map(k => v.right[k] * sx + v.up[k] * sy);
+  return { dir: v.dir, up: v.up, right: v.right, target, d };
+}
